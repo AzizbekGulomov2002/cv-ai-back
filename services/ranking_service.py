@@ -1,0 +1,355 @@
+"""
+Ranking service for matching candidates to jobs using embeddings and similarity scoring.
+"""
+import logging
+from typing import List, Dict, Tuple, Optional
+from django.db.models import QuerySet
+
+from apps.candidates.models import Candidate
+from apps.jobs.models import Job
+from apps.ranking.models import RankingSession, CandidateRanking
+from .embedding_service import EmbeddingService
+from .explain_service import ExplanationService
+
+logger = logging.getLogger(__name__)
+
+
+class RankingService:
+    """
+    Service class for ranking candidates against job requirements.
+    """
+    
+    def __init__(self):
+        """Initialize the ranking service."""
+        self.embedding_service = EmbeddingService()
+        self.explanation_service = ExplanationService()
+    
+    def ensure_embeddings(self, candidates: QuerySet[Candidate], job: Job) -> Tuple[bool, List[str]]:
+        """
+        Ensure all candidates and the job have embeddings generated.
+        
+        Args:
+            candidates: QuerySet of candidates to check
+            job: Job to check
+            
+        Returns:
+            tuple: (success, list_of_error_messages)
+        """
+        errors = []
+        
+        # Check job embedding
+        if not job.has_embedding:
+            try:
+                job_text = f"{job.title}\n{job.description}\n{job.requirements}"
+                embedding, used_openai = self.embedding_service.generate_job_embedding(job_text)
+                job.embedding_vector = embedding
+                job.save()
+                logger.info(f"Generated embedding for job: {job.title}")
+            except Exception as e:
+                error_msg = f"Failed to generate embedding for job {job.title}: {str(e)}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+        
+        # Check candidate embeddings
+        for candidate in candidates:
+            if not candidate.has_embedding:
+                try:
+                    if not candidate.extracted_text:
+                        errors.append(f"No extracted text for candidate {candidate.name}")
+                        continue
+                    
+                    embedding, used_openai = self.embedding_service.generate_cv_embedding(
+                        candidate.extracted_text
+                    )
+                    candidate.embedding_vector = embedding
+                    candidate.save()
+                    logger.info(f"Generated embedding for candidate: {candidate.name}")
+                except Exception as e:
+                    error_msg = f"Failed to generate embedding for candidate {candidate.name}: {str(e)}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+        
+        return len(errors) == 0, errors
+    
+    def calculate_candidate_score(self, candidate: Candidate, job: Job) -> float:
+        """
+        Calculate matching score for a candidate against a job.
+        
+        Args:
+            candidate: Candidate to score
+            job: Job to match against
+            
+        Returns:
+            float: Matching score between 0 and 100
+        """
+        if not candidate.has_embedding or not job.has_embedding:
+            logger.warning(f"Missing embeddings for candidate {candidate.name} or job {job.title}")
+            return 0.0
+        
+        try:
+            # Calculate basic embedding similarity
+            similarity_score = self.embedding_service.calculate_similarity_score(
+                candidate.embedding_vector,
+                job.embedding_vector
+            )
+            
+            # Apply additional scoring factors
+            final_score = self._apply_scoring_adjustments(candidate, job, similarity_score)
+            
+            # Ensure score is within bounds
+            return max(0.0, min(100.0, final_score))
+            
+        except Exception as e:
+            logger.error(f"Error calculating score for {candidate.name}: {str(e)}")
+            return 0.0
+    
+    def _apply_scoring_adjustments(self, candidate: Candidate, job: Job, base_score: float) -> float:
+        """
+        Apply additional scoring adjustments based on job requirements.
+        
+        Args:
+            candidate: Candidate being scored
+            job: Job requirements
+            base_score: Base similarity score
+            
+        Returns:
+            float: Adjusted score
+        """
+        adjusted_score = base_score
+        
+        # Experience adjustment
+        if job.min_experience > 0 and candidate.experience_years is not None:
+            if candidate.experience_years >= job.min_experience:
+                # Bonus for meeting experience requirement
+                adjusted_score += 5.0
+            else:
+                # Penalty for insufficient experience
+                experience_gap = job.min_experience - candidate.experience_years
+                penalty = min(20.0, experience_gap * 2.0)  # Max 20 point penalty
+                adjusted_score -= penalty
+        
+        # Skills matching adjustment
+        if job.required_skills and candidate.skills:
+            candidate_skills_lower = [skill.lower() for skill in candidate.skills]
+            required_skills_lower = [skill.lower() for skill in job.required_skills]
+            
+            matched_count = sum(1 for skill in required_skills_lower if skill in candidate_skills_lower)
+            match_ratio = matched_count / len(required_skills_lower) if required_skills_lower else 0
+            
+            # Significant bonus/penalty based on skills match
+            if match_ratio >= 0.8:
+                adjusted_score += 10.0
+            elif match_ratio >= 0.5:
+                adjusted_score += 5.0
+            elif match_ratio < 0.3:
+                adjusted_score -= 10.0
+        
+        return adjusted_score
+    
+    def rank_candidates_for_job(self, job: Job, candidates: Optional[QuerySet[Candidate]] = None, 
+                               user=None) -> RankingSession:
+        """
+        Rank all active candidates for a specific job.
+        
+        Args:
+            job: Job to rank candidates for
+            candidates: Optional specific candidates to rank (defaults to all active)
+            user: User performing the ranking
+            
+        Returns:
+            RankingSession: Created ranking session with results
+        """
+        if candidates is None:
+            candidates = Candidate.objects.filter(is_active=True)
+        
+        # Ensure all candidates and job have embeddings
+        success, errors = self.ensure_embeddings(candidates, job)
+        if not success:
+            logger.warning(f"Some embeddings failed to generate: {errors}")
+        
+        # Create ranking session
+        session = RankingSession.objects.create(
+            job=job,
+            created_by=user,
+            use_openai_embeddings=self.embedding_service.use_openai,
+            candidates_count=candidates.count()
+        )
+        
+        # Score all candidates
+        candidate_scores = []
+        for candidate in candidates:
+            score = self.calculate_candidate_score(candidate, job)
+            candidate_scores.append((candidate, score))
+        
+        # Sort by score (highest first)
+        candidate_scores.sort(key=lambda x: x[1], reverse=True)
+        
+        # Create ranking records
+        ranking_objects = []
+        for rank, (candidate, score) in enumerate(candidate_scores, 1):
+            # Generate explanation for this ranking
+            explanation_data = self.explanation_service.generate_explanation(
+                candidate, job, score
+            )
+            
+            ranking = CandidateRanking(
+                session=session,
+                candidate=candidate,
+                ai_score=score,
+                ai_rank=rank,
+                matched_skills=explanation_data['matched_skills'],
+                missing_skills=explanation_data['missing_skills'],
+                explanation=explanation_data['explanation'],
+                bias_flags=explanation_data.get('bias_flags', [])
+            )
+            ranking_objects.append(ranking)
+        
+        # Bulk create rankings for efficiency
+        CandidateRanking.objects.bulk_create(ranking_objects)
+        
+        logger.info(f"Ranked {len(candidate_scores)} candidates for job: {job.title}")
+        return session
+    
+    def get_top_candidates(self, job: Job, limit: int = 10) -> List[CandidateRanking]:
+        """
+        Get top ranked candidates for a job from the most recent ranking session.
+        
+        Args:
+            job: Job to get candidates for
+            limit: Maximum number of candidates to return
+            
+        Returns:
+            List[CandidateRanking]: Top ranked candidates
+        """
+        latest_session = RankingSession.objects.filter(job=job).order_by('-created_at').first()
+        
+        if not latest_session:
+            return []
+        
+        return CandidateRanking.objects.filter(
+            session=latest_session
+        ).order_by('ai_rank')[:limit]
+    
+    def rerank_with_feedback(self, ranking: CandidateRanking, human_score: float, 
+                           feedback: str, user) -> CandidateRanking:
+        """
+        Update ranking with human feedback and potentially trigger reranking.
+        
+        Args:
+            ranking: Ranking to update
+            human_score: Human-assigned score
+            feedback: Human feedback text
+            user: User providing feedback
+            
+        Returns:
+            CandidateRanking: Updated ranking
+        """
+        from django.utils import timezone
+        
+        # Update ranking with human feedback
+        ranking.human_score = human_score
+        ranking.human_feedback = feedback
+        ranking.reviewed_by = user
+        ranking.reviewed_at = timezone.now()
+        ranking.save()
+        
+        logger.info(f"Updated ranking for {ranking.candidate.name} with human feedback")
+        
+        # TODO: In future versions, could use this feedback to improve AI model
+        # self._learn_from_feedback(ranking)
+        
+        return ranking
+    
+    def get_ranking_analytics(self, job: Job = None, days: int = 30) -> Dict:
+        """
+        Get analytics about ranking performance.
+        
+        Args:
+            job: Optional specific job to analyze
+            days: Number of days to look back
+            
+        Returns:
+            dict: Analytics data
+        """
+        from django.utils import timezone
+        from django.db.models import Avg, Count, Q
+        from datetime import timedelta
+        
+        try:
+            # Base queryset
+            base_qs = CandidateRanking.objects.filter(
+                session__created_at__gte=timezone.now() - timedelta(days=days)
+            )
+            
+            if job:
+                base_qs = base_qs.filter(session__job=job)
+            
+            # Basic statistics
+            stats = base_qs.aggregate(
+                total_rankings=Count('id'),
+                avg_ai_score=Avg('ai_score'),
+                avg_human_score=Avg('human_score'),
+                reviewed_count=Count('id', filter=Q(reviewed_by__isnull=False))
+            )
+            
+            # Score distribution
+            score_ranges = [
+                ('90-100', base_qs.filter(ai_score__gte=90).count()),
+                ('80-89', base_qs.filter(ai_score__gte=80, ai_score__lt=90).count()),
+                ('70-79', base_qs.filter(ai_score__gte=70, ai_score__lt=80).count()),
+                ('60-69', base_qs.filter(ai_score__gte=60, ai_score__lt=70).count()),
+                ('Below 60', base_qs.filter(ai_score__lt=60).count()),
+            ]
+            
+            # Human override statistics
+            human_decisions = base_qs.filter(
+                reviewed_by__isnull=False
+            ).values('human_decision').annotate(
+                count=Count('id')
+            )
+            
+            return {
+                'period_days': days,
+                'job_title': job.title if job else 'All Jobs',
+                'total_rankings': stats['total_rankings'] or 0,
+                'average_ai_score': round(stats['avg_ai_score'] or 0, 2),
+                'average_human_score': round(stats['avg_human_score'] or 0, 2),
+                'review_rate': (
+                    round((stats['reviewed_count'] or 0) / (stats['total_rankings'] or 1) * 100, 1)
+                ),
+                'score_distribution': score_ranges,
+                'human_decisions': list(human_decisions),
+                'embedding_service_stats': self.embedding_service.get_embedding_stats()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating ranking analytics: {str(e)}")
+            return {
+                'error': str(e),
+                'period_days': days,
+                'job_title': job.title if job else 'All Jobs'
+            }
+    
+    def bulk_rank_jobs(self, jobs: List[Job], user) -> List[RankingSession]:
+        """
+        Rank candidates for multiple jobs efficiently.
+        
+        Args:
+            jobs: List of jobs to process
+            user: User performing the ranking
+            
+        Returns:
+            List[RankingSession]: Created ranking sessions
+        """
+        sessions = []
+        candidates = Candidate.objects.filter(is_active=True)
+        
+        for job in jobs:
+            try:
+                session = self.rank_candidates_for_job(job, candidates, user)
+                sessions.append(session)
+                logger.info(f"Completed ranking for job: {job.title}")
+            except Exception as e:
+                logger.error(f"Failed to rank job {job.title}: {str(e)}")
+        
+        return sessions

@@ -1,0 +1,11 @@
+# Cosine similarity uses numpy only — scikit-learn is not used in this project.
+# On Python 3.13, old scikit-learn pins force a source build and often fail (Cython errors).
+
+Django==4.2.7
+djangorestframework==3.14.0
+django-cors-headers==4.3.1
+python-dotenv==1.0.0
+openai==1.3.5
+PyPDF2==3.0.1
+python-docx==0.8.11
+numpy>=2.0,<3
