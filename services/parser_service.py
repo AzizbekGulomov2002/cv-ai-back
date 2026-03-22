@@ -8,6 +8,16 @@ from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
 try:
+    import fitz  # PyMuPDF — eng yaxshi matn chiqarish (Word/Canva PDF)
+except ImportError:
+    fitz = None
+
+try:
+    from pypdf import PdfReader as PypdfReader
+except ImportError:
+    PypdfReader = None
+
+try:
     import PyPDF2
 except ImportError:
     PyPDF2 = None
@@ -53,9 +63,9 @@ class CVParserService:
     
     def _check_dependencies(self):
         """Check if required dependencies are installed."""
-        if PyPDF2 is None:
-            logger.warning("PyPDF2 not installed. PDF parsing will not work.")
-        
+        if fitz is None and PypdfReader is None and PyPDF2 is None:
+            logger.warning("No PDF library (PyMuPDF / pypdf / PyPDF2). PDF parsing will fail.")
+
         if Document is None:
             logger.warning("python-docx not installed. DOCX parsing will not work.")
     
@@ -73,34 +83,78 @@ class CVParserService:
     
     def extract_text_from_pdf(self, file_path: str) -> str:
         """
-        Extract text from a PDF file.
-        
-        Args:
-            file_path: Path to the PDF file
-            
-        Returns:
-            str: Extracted text content
-            
-        Raises:
-            ImportError: If PyPDF2 is not installed
-            Exception: If file cannot be processed
+        Extract text from a PDF using several backends (PyMuPDF → pypdf → PyPDF2).
+
+        PyPDF2 alone often returns empty strings for PDFs exported from Word / Canva
+        or with non-standard encodings; PyMuPDF usually fixes that.
         """
-        if PyPDF2 is None:
-            raise ImportError("PyPDF2 is required for PDF parsing. Install with: pip install PyPDF2")
-        
-        try:
-            with open(file_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
-                text = ""
-                
-                for page in pdf_reader.pages:
-                    text += page.extract_text() + "\n"
-                
-                return text.strip()
-                
-        except Exception as e:
-            logger.error(f"Error extracting text from PDF {file_path}: {str(e)}")
-            raise Exception(f"Failed to extract text from PDF: {str(e)}")
+        path = str(file_path)
+        errors: List[str] = []
+
+        # 1) PyMuPDF
+        if fitz is not None:
+            try:
+                doc = fitz.open(path)
+                try:
+                    parts = []
+                    for i in range(doc.page_count):
+                        parts.append(doc.load_page(i).get_text("text") or "")
+                    text = "\n".join(parts).strip()
+                    if text:
+                        logger.info("PDF text via PyMuPDF: %d chars", len(text))
+                        return text
+                    errors.append("PyMuPDF: empty text (image-only / scanned PDF?)")
+                finally:
+                    doc.close()
+            except Exception as e:
+                err = f"PyMuPDF: {e}"
+                errors.append(err)
+                logger.warning(err)
+
+        # 2) pypdf (maintained fork, better than old PyPDF2 in many cases)
+        if PypdfReader is not None:
+            try:
+                reader = PypdfReader(path, strict=False)
+                chunks = []
+                for page in reader.pages:
+                    chunks.append(page.extract_text() or "")
+                text = "\n".join(chunks).strip()
+                if text:
+                    logger.info("PDF text via pypdf: %d chars", len(text))
+                    return text
+                errors.append("pypdf: empty text")
+            except Exception as e:
+                err = f"pypdf: {e}"
+                errors.append(err)
+                logger.warning(err)
+
+        # 3) PyPDF2 (last resort)
+        if PyPDF2 is not None:
+            try:
+                with open(path, "rb") as fh:
+                    pdf_reader = PyPDF2.PdfReader(fh)
+                    text = "\n".join(
+                        (p.extract_text() or "") for p in pdf_reader.pages
+                    ).strip()
+                    if text:
+                        logger.info("PDF text via PyPDF2: %d chars", len(text))
+                        return text
+                errors.append("PyPDF2: empty text")
+            except Exception as e:
+                err = f"PyPDF2: {e}"
+                errors.append(err)
+                logger.warning(err)
+
+        if not errors:
+            raise ImportError(
+                "Install a PDF library: pip install PyMuPDF pypdf PyPDF2"
+            )
+
+        raise ValueError(
+            "Could not extract text from PDF. "
+            "If this is a scanned (image) PDF, export as DOCX or use OCR. "
+            f"Attempts: {'; '.join(errors)}"
+        )
     
     def extract_text_from_docx(self, file_path: str) -> str:
         """

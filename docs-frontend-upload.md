@@ -1,5 +1,15 @@
 # CV upload — faqat fayl (OpenAI ajratish)
 
+## Server paketlari (PDF matn)
+
+Agar PDF dan matn chiqmasa, serverda o‘rnating:
+
+```bash
+pip install -r requirements.txt
+```
+
+`PyMuPDF` va `pypdf` PyPDF2 dan ko‘ra ko‘p CV larni o‘qiydi. **Faqat rasm (skaner)** PDF bo‘lsa — matn bo‘lmaydi; **DOCX** yuboring yoki OCR qiling.
+
 ## Qisqa
 
 - **`POST /api/candidates/upload/`** — faqat **PDF/DOCX** yuborish kifoya (`cv_file`, `file` yoki `cv`).
