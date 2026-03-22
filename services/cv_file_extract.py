@@ -13,10 +13,17 @@ from typing import Any, Dict, Optional
 
 from django.conf import settings
 
+from services.cv_json_shared import normalize_llm_profile
 from services.gemini_cv_file_pipeline import extract_with_gemini_file
 from services.openai_cv_file_pipeline import extract_with_openai_file
 
 logger = logging.getLogger(__name__)
+
+
+def _finalize_profile(p: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not p:
+        return None
+    return normalize_llm_profile(p)
 
 
 def _should_fallback_to_gemini(exc: BaseException) -> bool:
@@ -63,7 +70,7 @@ def extract_structured_profile_from_cv_file(file_path: str) -> Optional[Dict[str
             logger.warning("CV_EXTRACT_PROVIDER=openai lekin OPENAI_API_KEY yo‘q.")
             return None
         try:
-            return extract_with_openai_file(file_path)
+            return _finalize_profile(extract_with_openai_file(file_path))
         except Exception as e:
             logger.exception("OpenAI fayl pipeline xato: %s", e)
             return None
@@ -73,7 +80,7 @@ def extract_structured_profile_from_cv_file(file_path: str) -> Optional[Dict[str
             logger.warning("CV_EXTRACT_PROVIDER=gemini lekin GEMINI_API_KEY yo‘q.")
             return None
         try:
-            return extract_with_gemini_file(file_path)
+            return _finalize_profile(extract_with_gemini_file(file_path))
         except Exception as e:
             logger.exception("Gemini fayl pipeline xato: %s", e)
             return None
@@ -81,7 +88,7 @@ def extract_structured_profile_from_cv_file(file_path: str) -> Optional[Dict[str
     # --- auto ---
     if openai_key:
         try:
-            return extract_with_openai_file(file_path)
+            return _finalize_profile(extract_with_openai_file(file_path))
         except Exception as e:
             if _should_fallback_to_gemini(e) and gemini_key:
                 logger.warning(
@@ -89,7 +96,7 @@ def extract_structured_profile_from_cv_file(file_path: str) -> Optional[Dict[str
                     e,
                 )
                 try:
-                    return extract_with_gemini_file(file_path)
+                    return _finalize_profile(extract_with_gemini_file(file_path))
                 except Exception as e2:
                     logger.exception("Gemini fallback ham muvaffaqiyatsiz: %s", e2)
                     return None
@@ -98,7 +105,7 @@ def extract_structured_profile_from_cv_file(file_path: str) -> Optional[Dict[str
 
     if gemini_key:
         try:
-            return extract_with_gemini_file(file_path)
+            return _finalize_profile(extract_with_gemini_file(file_path))
         except Exception as e:
             logger.exception("Gemini fayl pipeline xato: %s", e)
             return None

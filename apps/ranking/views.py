@@ -21,6 +21,60 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 
+@api_view(["POST"])
+def preview_job_candidate_match(request):
+    """
+    Bitta job + nomzod uchun explainable match (ranking sessiyasini yaratmasdan).
+    Dashboard / HR tekshiruvi.
+    """
+    job_id = request.data.get("job_id")
+    candidate_id = request.data.get("candidate_id")
+    if not job_id or not candidate_id:
+        return Response(
+            {"error": "job_id and candidate_id are required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    try:
+        job = get_object_or_404(Job, id=int(job_id), is_active=True)
+        candidate = get_object_or_404(Candidate, id=int(candidate_id), is_active=True)
+    except (TypeError, ValueError):
+        return Response({"error": "Invalid id"}, status=status.HTTP_400_BAD_REQUEST)
+
+    ranking_service = RankingService()
+    _, errors = ranking_service.ensure_embeddings(
+        Candidate.objects.filter(pk=candidate.pk), job
+    )
+
+    ev = ranking_service.evaluate_candidate_for_job(candidate, job)
+    actor = get_api_actor(request)
+    AuditLog.log_action(
+        user=actor,
+        action_type="read",
+        description=f"Match preview job={job.id} candidate={candidate.id}",
+        metadata={"job_id": job.id, "candidate_id": candidate.id},
+        risk_level="low",
+        ip_address=request.META.get("REMOTE_ADDR"),
+    )
+
+    return Response(
+        {
+            "message": "Match preview (decision-support only; not a hiring decision).",
+            "job": {"id": job.id, "title": job.title},
+            "candidate": {"id": candidate.id, "name": candidate.name},
+            "embedding_warnings": errors,
+            "match": {
+                "composite_score": ev["score"],
+                "match_breakdown": ev["match_breakdown"],
+                "matched_skills": ev["matched_skills"],
+                "missing_skills": ev["missing_skills"],
+                "explanation": ev["explanation"],
+                "bias_flags": ev["bias_flags"],
+            },
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
 @api_view(['POST'])
 def run_ranking(request):
     """

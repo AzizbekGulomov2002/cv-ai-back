@@ -41,14 +41,15 @@ class CandidateRankingSerializer(serializers.ModelSerializer):
         model = CandidateRanking
         fields = [
             'id', 'candidate', 'ai_score', 'ai_rank', 'matched_skills',
-            'missing_skills', 'explanation', 'bias_flags', 'human_decision',
+            'missing_skills', 'explanation', 'bias_flags', 'match_breakdown',
+            'human_decision',
             'human_score', 'human_feedback', 'is_reviewed', 'final_score',
             'has_bias_flags', 'explanation_summary', 'reviewed_by_username',
             'reviewed_at', 'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'ai_score', 'ai_rank', 'matched_skills', 'missing_skills',
-            'explanation', 'bias_flags', 'created_at', 'updated_at',
+            'explanation', 'bias_flags', 'match_breakdown', 'created_at', 'updated_at',
             'reviewed_at'
         ]
 

@@ -85,6 +85,8 @@ Tizim xizmat-orientlangan arxitektura asosida qurilgan:
    Asosiy ro‘yxat **minimal** (PythonAnywhere disk uchun): Django, DRF, `openai`, `google-generativeai`, `numpy` va lokal PDF kutubxonalari **yo‘q** — embeddinglar `math`/`random` bilan hisoblanadi.  
    Lokal `parser_service` orqali PDF/DOCX dan to‘g‘ridan-to‘g‘ri matn kerak bo‘lsa: `pip install -r requirements-optional.txt`.
 
+   **HR / EU AI Act API (explainability, fairness, human override):** `docs/api-compliance-hr.md`
+
 4. **Muhit o'zgaruvchilarini sozlang:**
    ```bash
    cp .env.example .env  # Namunadan yarating

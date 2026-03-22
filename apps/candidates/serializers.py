@@ -83,7 +83,7 @@ class CandidateUploadSerializer(serializers.ModelSerializer):
         attrs["email"] = email[:254] if email else ""
 
         phone = (attrs.get("phone") or "").strip()
-        attrs["phone"] = phone[:15] if phone else ""
+        attrs["phone"] = phone[:32] if phone else ""
 
         attrs.pop("file", None)
         attrs.pop("cv", None)
@@ -108,7 +108,8 @@ class CandidateSerializer(serializers.ModelSerializer):
         model = Candidate
         fields = [
             'id', 'name', 'email', 'phone', 'cv_file', 'file_extension',
-            'skills', 'experience_years', 'education', 'has_embedding',
+            'skills', 'experience_years', 'education', 'professional_summary',
+            'fairness_scan_json', 'has_embedding',
             'ai_profile_json',
             'uploaded_by_username', 'created_at', 'updated_at', 'is_active'
         ]
@@ -132,4 +133,13 @@ class CandidateUpdateSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = Candidate
-        fields = ['name', 'email', 'phone', 'skills', 'experience_years', 'education', 'is_active']
+        fields = [
+            'name',
+            'email',
+            'phone',
+            'skills',
+            'experience_years',
+            'education',
+            'professional_summary',
+            'is_active',
+        ]

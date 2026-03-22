@@ -102,6 +102,13 @@ class CandidateRanking(models.Model):
         default=list,
         help_text='Potential bias indicators detected'
     )
+
+    # Per-dimension scores + WHY (semantic, skills, experience, …) — EU AI Act explainability
+    match_breakdown = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Structured job–candidate match dimensions and narratives',
+    )
     
     # Human override (MANDATORY for high-risk AI system)
     human_decision = models.CharField(
@@ -184,6 +191,7 @@ class CandidateRanking(models.Model):
             'missing_skills': self.missing_skills,
             'explanation': self.explanation,
             'bias_flags': self.bias_flags,
+            'match_breakdown': self.match_breakdown,
             'human_decision': self.human_decision,
             'is_reviewed': self.is_reviewed
         }

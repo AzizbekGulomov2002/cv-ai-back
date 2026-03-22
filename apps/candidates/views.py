@@ -42,8 +42,16 @@ def _apply_profile_dict_to_candidate(candidate: Candidate, profile: dict) -> Non
 
     ph = (profile.get("phone") or "").strip()
     if ph:
-        ph_clean = re.sub(r"\s+", "", ph)[:15]
+        ph_clean = re.sub(r"\s+", "", ph)[:32]
         candidate.phone = ph_clean
+
+    ps = profile.get("professional_summary")
+    if isinstance(ps, str) and ps.strip():
+        candidate.professional_summary = ps.strip()[:10000]
+
+    fs = profile.get("fairness_scan")
+    if isinstance(fs, dict):
+        candidate.fairness_scan_json = fs
 
     sk = profile.get("skills")
     if isinstance(sk, list):
@@ -88,6 +96,9 @@ def _cv_core_fields_from_profile(profile: dict) -> dict:
         "education_summary",
         "professional_summary",
         "embedding_text",
+        "fairness_scan",
+        "compliance",
+        "skill_evidence",
     )
     return {k: profile.get(k) for k in keys}
 

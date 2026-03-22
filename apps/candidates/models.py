@@ -27,7 +27,7 @@ class Candidate(models.Model):
     # Basic Information (filled by OpenAI extraction after upload; may be blank until then)
     name = models.CharField(max_length=200, blank=True, default='', help_text='Full name')
     email = models.EmailField(blank=True, default='', help_text='Email address')
-    phone = models.CharField(max_length=15, blank=True, help_text='Phone number')
+    phone = models.CharField(max_length=32, blank=True, help_text='Phone number')
     
     # CV File
     cv_file = models.FileField(
@@ -55,6 +55,19 @@ class Candidate(models.Model):
     education = models.TextField(
         blank=True,
         help_text='Education information'
+    )
+
+    professional_summary = models.TextField(
+        blank=True,
+        default='',
+        help_text='Short professional summary from CV extraction (LLM)',
+    )
+
+    # Fairness / proxy transparency (LLM fairness_scan) — scoringda ishlatilmaydi
+    fairness_scan_json = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Gender/age proxy detection and notes for HR review (transparency only)',
     )
 
     # To‘liq strukturalangan chiqish (OpenAI / Gemini JSON) — audit va UI

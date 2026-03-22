@@ -3,12 +3,21 @@ Explanation service for generating human-readable explanations of AI ranking dec
 MANDATORY for high-risk AI system compliance.
 """
 import logging
-from typing import Dict, List, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from apps.candidates.models import Candidate
 from apps.jobs.models import Job
 
 logger = logging.getLogger(__name__)
+
+# Og‘irliklar yig‘indisi 1.0 — faqat kasbiy moslik; himoyalangan belgilar skoringda ishlatilmaydi.
+MATCH_DIMENSION_WEIGHTS: Dict[str, float] = {
+    "semantic_alignment": 0.32,
+    "required_skills": 0.28,
+    "preferred_skills": 0.12,
+    "experience_fit": 0.18,
+    "education_signals": 0.10,
+}
 
 
 class ExplanationService:
@@ -20,6 +29,223 @@ class ExplanationService:
     def __init__(self):
         """Initialize the explanation service."""
         pass
+
+    def compute_match_breakdown(
+        self,
+        candidate: Candidate,
+        job: Job,
+        semantic_score_0_100: float,
+    ) -> Dict[str, Any]:
+        """
+        Job bilan nomzod mosligini o‘lcham-bo‘yicha (WHY bu ball) — vakant + embedding.
+
+        semantic_score_0_100: embedding cosine dan 0–100 ga map qilingan ball.
+        """
+        semantic = max(0.0, min(100.0, float(semantic_score_0_100)))
+        sem_expl = (
+            f"Semantic similarity between job text and CV embedding text is {semantic:.1f}/100 "
+            "(content overlap signal, not a hiring decision)."
+        )
+
+        matched_req, matched_pref, missing_req = self._find_skill_matches(
+            candidate.skills or [],
+            job.required_skills or [],
+            job.preferred_skills or [],
+        )
+        n_req = len(job.required_skills or [])
+        n_pref = len(job.preferred_skills or [])
+
+        if n_req > 0:
+            req_score = (len(matched_req) / n_req) * 100.0
+            req_expl = (
+                f"Required skills: {len(matched_req)}/{n_req} explicit matches "
+                f"({', '.join(matched_req[:8]) or 'none'}{', …' if len(matched_req) > 8 else ''}). "
+                f"Missing required: {', '.join(missing_req[:6]) or 'none'}"
+                f"{' …' if len(missing_req) > 6 else ''}."
+            )
+        else:
+            req_score = 75.0
+            req_expl = "Job has no explicit required_skills list; neutral score applied."
+
+        if n_pref > 0:
+            pref_score = (len(matched_pref) / n_pref) * 100.0
+            pref_expl = (
+                f"Preferred skills: {len(matched_pref)}/{n_pref} matched "
+                f"({', '.join(matched_pref[:6]) or 'none'})."
+            )
+        else:
+            pref_score = 70.0
+            pref_expl = "No preferred_skills on job; neutral contribution."
+
+        cy = candidate.experience_years
+        min_e = job.min_experience or 0
+        if cy is None:
+            exp_score = 55.0
+            exp_expl = "Years of experience not stated on candidate; conservative score."
+        elif min_e == 0:
+            exp_score = 100.0
+            exp_expl = f"Candidate reports {cy} years experience; job has no minimum bar."
+        elif cy >= min_e:
+            exp_score = 100.0
+            exp_expl = (
+                f"Experience fit: candidate {cy} y ≥ required {min_e} y."
+            )
+        else:
+            gap = min_e - cy
+            exp_score = max(0.0, 100.0 - gap * 18.0)
+            exp_expl = (
+                f"Experience gap: candidate {cy} y vs minimum {min_e} y "
+                f"({gap} year shortfall reduces this dimension)."
+            )
+
+        edu_text = (candidate.education or "").lower()
+        req_blob = f"{job.requirements} {job.description}".lower()
+        edu_keywords = [
+            "degree",
+            "bachelor",
+            "master",
+            "phd",
+            "university",
+            "diploma",
+        ]
+        if edu_text.strip():
+            hits = sum(1 for k in edu_keywords if k in edu_text)
+            req_hits = sum(1 for k in edu_keywords if k in req_blob)
+            if req_hits > 0:
+                edu_score = min(100.0, 40.0 + hits * 15.0 + req_hits * 5.0)
+                edu_expl = (
+                    "Education section present; overlap with job education-related wording "
+                    f"contributes to this sub-score (heuristic, not credential verification)."
+                )
+            else:
+                edu_score = min(100.0, 50.0 + hits * 12.0)
+                edu_expl = (
+                    "Education text extracted; job text does not stress formal education heavily."
+                )
+        else:
+            edu_score = 45.0
+            edu_expl = "No education summary on candidate profile; low education signal."
+
+        dimensions: List[Dict[str, Any]] = [
+            {
+                "id": "semantic_alignment",
+                "label": "Semantic alignment (job ↔ CV text)",
+                "score": round(semantic, 2),
+                "weight": MATCH_DIMENSION_WEIGHTS["semantic_alignment"],
+                "weighted_contribution": round(
+                    semantic * MATCH_DIMENSION_WEIGHTS["semantic_alignment"], 2
+                ),
+                "explanation": sem_expl,
+            },
+            {
+                "id": "required_skills",
+                "label": "Required skills coverage",
+                "score": round(req_score, 2),
+                "weight": MATCH_DIMENSION_WEIGHTS["required_skills"],
+                "weighted_contribution": round(
+                    req_score * MATCH_DIMENSION_WEIGHTS["required_skills"], 2
+                ),
+                "explanation": req_expl,
+                "matched": matched_req,
+                "missing": missing_req,
+            },
+            {
+                "id": "preferred_skills",
+                "label": "Preferred skills",
+                "score": round(pref_score, 2),
+                "weight": MATCH_DIMENSION_WEIGHTS["preferred_skills"],
+                "weighted_contribution": round(
+                    pref_score * MATCH_DIMENSION_WEIGHTS["preferred_skills"], 2
+                ),
+                "explanation": pref_expl,
+                "matched": matched_pref,
+            },
+            {
+                "id": "experience_fit",
+                "label": "Experience vs job minimum",
+                "score": round(exp_score, 2),
+                "weight": MATCH_DIMENSION_WEIGHTS["experience_fit"],
+                "weighted_contribution": round(
+                    exp_score * MATCH_DIMENSION_WEIGHTS["experience_fit"], 2
+                ),
+                "explanation": exp_expl,
+            },
+            {
+                "id": "education_signals",
+                "label": "Education signals (heuristic)",
+                "score": round(edu_score, 2),
+                "weight": MATCH_DIMENSION_WEIGHTS["education_signals"],
+                "weighted_contribution": round(
+                    edu_score * MATCH_DIMENSION_WEIGHTS["education_signals"], 2
+                ),
+                "explanation": edu_expl,
+            },
+        ]
+
+        composite = sum(d["weighted_contribution"] for d in dimensions)
+        composite = max(0.0, min(100.0, composite))
+
+        return {
+            "schema_version": 1,
+            "job_id": job.id,
+            "candidate_id": candidate.id,
+            "composite_score": round(composite, 2),
+            "dimensions": dimensions,
+            "weights": MATCH_DIMENSION_WEIGHTS,
+            "human_in_the_loop_notice": (
+                "This score is decision-support only. No automated hiring decision. "
+                "HR must Accept / Reject / Shortlist with documented review."
+            ),
+            "fairness_notice": (
+                "Gender, age, ethnicity, and religion are not used as model inputs for these dimensions. "
+                "CV proxy flags (if any) are stored separately for transparency review."
+            ),
+        }
+
+    def narrative_from_match_breakdown(self, breakdown: Dict[str, Any]) -> str:
+        """match_breakdown dan inson o‘qiydigan WHY matn."""
+        if not breakdown or "dimensions" not in breakdown:
+            return "No structured explanation available."
+        lines = [
+            f"Overall match index: {breakdown.get('composite_score', 0):.1f}/100 "
+            "(recommendation support — not a hire/reject decision).",
+            "",
+            "How this score is composed:",
+        ]
+        for d in breakdown.get("dimensions", []):
+            pct = float(d.get("weight", 0)) * 100.0
+            lines.append(
+                f"• {d.get('label', d.get('id'))}: {d.get('score', 0):.0f}/100 "
+                f"(weight {pct:.0f}% of total) — {d.get('explanation', '')}"
+            )
+        lines.append("")
+        lines.append(breakdown.get("human_in_the_loop_notice", ""))
+        lines.append(breakdown.get("fairness_notice", ""))
+        return "\n".join(lines)
+
+    def merge_bias_flags_for_ranking(
+        self,
+        heuristic_flags: List[str],
+        fairness_scan: Optional[dict],
+    ) -> List[str]:
+        """Heuristic bias + LLM fairness_scan — tartibsiz takrorlarsiz ro‘yxat."""
+        out: List[str] = list(heuristic_flags or [])
+        if isinstance(fairness_scan, dict):
+            if fairness_scan.get("gender_proxy_detected"):
+                out.append("transparency:gender_proxy_text_in_cv")
+            if fairness_scan.get("age_proxy_detected"):
+                out.append("transparency:age_proxy_text_in_cv")
+            for x in fairness_scan.get("other_proxy_flags") or []:
+                if isinstance(x, str) and x.strip():
+                    out.append(f"transparency:{x.strip()[:80]}")
+        # dedupe preserve order
+        seen: Set[str] = set()
+        unique: List[str] = []
+        for f in out:
+            if f not in seen:
+                seen.add(f)
+                unique.append(f)
+        return unique
     
     def _normalize_skills(self, skills: List[str]) -> Set[str]:
         """

@@ -2,7 +2,7 @@
 Ranking service for matching candidates to jobs using embeddings and similarity scoring.
 """
 import logging
-from typing import List, Dict, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from django.db.models import QuerySet
 
 from apps.candidates.models import Candidate
@@ -71,80 +71,64 @@ class RankingService:
         
         return len(errors) == 0, errors
     
-    def calculate_candidate_score(self, candidate: Candidate, job: Job) -> float:
-        """
-        Calculate matching score for a candidate against a job.
-        
-        Args:
-            candidate: Candidate to score
-            job: Job to match against
-            
-        Returns:
-            float: Matching score between 0 and 100
-        """
+    def _semantic_score_0_100(self, candidate: Candidate, job: Job) -> float:
+        """Embedding cosine → 0–100 (match_breakdown ning semantic o‘lchami)."""
         if not candidate.has_embedding or not job.has_embedding:
-            logger.warning(f"Missing embeddings for candidate {candidate.name} or job {job.title}")
-            return 0.0
-        
-        try:
-            # Calculate basic embedding similarity
-            similarity_score = self.embedding_service.calculate_similarity_score(
-                candidate.embedding_vector,
-                job.embedding_vector
+            logger.warning(
+                "Missing embeddings for candidate %s or job %s — semantic dimension = 0",
+                candidate.name,
+                job.title,
             )
-            
-            # Apply additional scoring factors
-            final_score = self._apply_scoring_adjustments(candidate, job, similarity_score)
-            
-            # Ensure score is within bounds
-            return max(0.0, min(100.0, final_score))
-            
-        except Exception as e:
-            logger.error(f"Error calculating score for {candidate.name}: {str(e)}")
             return 0.0
-    
-    def _apply_scoring_adjustments(self, candidate: Candidate, job: Job, base_score: float) -> float:
+        try:
+            return float(
+                self.embedding_service.calculate_similarity_score(
+                    candidate.embedding_vector,
+                    job.embedding_vector,
+                )
+            )
+        except Exception as e:
+            logger.error("Semantic score error for %s: %s", candidate.name, e)
+            return 0.0
+
+    def evaluate_candidate_for_job(self, candidate: Candidate, job: Job) -> Dict:
         """
-        Apply additional scoring adjustments based on job requirements.
-        
-        Args:
-            candidate: Candidate being scored
-            job: Job requirements
-            base_score: Base similarity score
-            
-        Returns:
-            float: Adjusted score
+        Explainable score: o‘lchamlar, WHY matn, bias bayroqlari (EU AI Act style).
         """
-        adjusted_score = base_score
-        
-        # Experience adjustment
-        if job.min_experience > 0 and candidate.experience_years is not None:
-            if candidate.experience_years >= job.min_experience:
-                # Bonus for meeting experience requirement
-                adjusted_score += 5.0
-            else:
-                # Penalty for insufficient experience
-                experience_gap = job.min_experience - candidate.experience_years
-                penalty = min(20.0, experience_gap * 2.0)  # Max 20 point penalty
-                adjusted_score -= penalty
-        
-        # Skills matching adjustment
-        if job.required_skills and candidate.skills:
-            candidate_skills_lower = [skill.lower() for skill in candidate.skills]
-            required_skills_lower = [skill.lower() for skill in job.required_skills]
-            
-            matched_count = sum(1 for skill in required_skills_lower if skill in candidate_skills_lower)
-            match_ratio = matched_count / len(required_skills_lower) if required_skills_lower else 0
-            
-            # Significant bonus/penalty based on skills match
-            if match_ratio >= 0.8:
-                adjusted_score += 10.0
-            elif match_ratio >= 0.5:
-                adjusted_score += 5.0
-            elif match_ratio < 0.3:
-                adjusted_score -= 10.0
-        
-        return adjusted_score
+        sem = self._semantic_score_0_100(candidate, job)
+        breakdown = self.explanation_service.compute_match_breakdown(candidate, job, sem)
+        score = float(breakdown["composite_score"])
+
+        bias_h = self.explanation_service._check_for_bias_indicators(candidate, job)
+        fairness = getattr(candidate, "fairness_scan_json", None) or {}
+        bias_flags = self.explanation_service.merge_bias_flags_for_ranking(
+            bias_h, fairness if isinstance(fairness, dict) else {}
+        )
+
+        dim_req = next(
+            (d for d in breakdown["dimensions"] if d["id"] == "required_skills"), {}
+        )
+        dim_pref = next(
+            (d for d in breakdown["dimensions"] if d["id"] == "preferred_skills"), {}
+        )
+        matched_skills = list(dim_req.get("matched") or []) + list(
+            dim_pref.get("matched") or []
+        )
+        missing_skills = list(dim_req.get("missing") or [])
+        explanation = self.explanation_service.narrative_from_match_breakdown(breakdown)
+
+        return {
+            "score": score,
+            "match_breakdown": breakdown,
+            "matched_skills": matched_skills,
+            "missing_skills": missing_skills,
+            "explanation": explanation,
+            "bias_flags": bias_flags,
+        }
+
+    def calculate_candidate_score(self, candidate: Candidate, job: Job) -> float:
+        """Yagona raqam (faqat composite) — ranking ichida ``evaluate_candidate_for_job`` afzal."""
+        return float(self.evaluate_candidate_for_job(candidate, job)["score"])
     
     def rank_candidates_for_job(self, job: Job, candidates: Optional[QuerySet[Candidate]] = None, 
                                user=None) -> RankingSession:
@@ -175,32 +159,28 @@ class RankingService:
             candidates_count=candidates.count()
         )
         
-        # Score all candidates
+        # Score all candidates (explainable dimensions)
         candidate_scores = []
         for candidate in candidates:
-            score = self.calculate_candidate_score(candidate, job)
-            candidate_scores.append((candidate, score))
+            ev = self.evaluate_candidate_for_job(candidate, job)
+            candidate_scores.append((candidate, ev["score"], ev))
         
         # Sort by score (highest first)
         candidate_scores.sort(key=lambda x: x[1], reverse=True)
         
         # Create ranking records
         ranking_objects = []
-        for rank, (candidate, score) in enumerate(candidate_scores, 1):
-            # Generate explanation for this ranking
-            explanation_data = self.explanation_service.generate_explanation(
-                candidate, job, score
-            )
-            
+        for rank, (candidate, score, ev) in enumerate(candidate_scores, 1):
             ranking = CandidateRanking(
                 session=session,
                 candidate=candidate,
                 ai_score=score,
                 ai_rank=rank,
-                matched_skills=explanation_data['matched_skills'],
-                missing_skills=explanation_data['missing_skills'],
-                explanation=explanation_data['explanation'],
-                bias_flags=explanation_data.get('bias_flags', [])
+                matched_skills=ev["matched_skills"],
+                missing_skills=ev["missing_skills"],
+                explanation=ev["explanation"],
+                bias_flags=ev.get("bias_flags", []),
+                match_breakdown=ev.get("match_breakdown") or {},
             )
             ranking_objects.append(ranking)
         
