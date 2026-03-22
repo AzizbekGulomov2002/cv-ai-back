@@ -1,23 +1,32 @@
 """
 Candidate models for AI CV System.
 """
-from django.db import models
-from django.conf import settings
 import os
+import uuid
+
+from django.conf import settings
+from django.db import models
 
 
 def candidate_file_path(instance, filename):
-    """Generate upload path for candidate CV files."""
-    return f'cvs/{instance.id}/{filename}'
+    """
+    Upload path for CV files.
+
+    Django may evaluate ``upload_to`` before the row has a primary key; using ``None``
+    produced paths like ``cvs/None/file.pdf``. Use a stable folder per upload instead.
+    """
+    safe_name = os.path.basename(filename)
+    folder = instance.pk if getattr(instance, "pk", None) else uuid.uuid4().hex[:12]
+    return f"cvs/{folder}/{safe_name}"
 
 
 class Candidate(models.Model):
     """
     Model to store candidate information and CV data.
     """
-    # Basic Information
-    name = models.CharField(max_length=200, help_text='Full name')
-    email = models.EmailField(help_text='Email address')
+    # Basic Information (filled by OpenAI extraction after upload; may be blank until then)
+    name = models.CharField(max_length=200, blank=True, default='', help_text='Full name')
+    email = models.EmailField(blank=True, default='', help_text='Email address')
     phone = models.CharField(max_length=15, blank=True, help_text='Phone number')
     
     # CV File
@@ -47,6 +56,13 @@ class Candidate(models.Model):
         blank=True,
         help_text='Education information'
     )
+
+    # Full structured output from OpenAI (or heuristic fallback) for audit / UI
+    ai_profile_json = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Structured CV profile from OpenAI JSON extraction',
+    )
     
     # Embeddings
     embedding_vector = models.JSONField(
@@ -74,7 +90,9 @@ class Candidate(models.Model):
         ordering = ['-created_at']
         
     def __str__(self):
-        return f"{self.name} - {self.email}"
+        if self.name or self.email:
+            return f"{self.name or '—'} — {self.email or '—'}"
+        return f"Candidate #{self.pk}"
     
     @property
     def file_extension(self):

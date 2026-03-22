@@ -200,6 +200,47 @@ class CVParserService:
         
         return None
     
+    def _name_from_filename(self, filename: str) -> Optional[str]:
+        """
+        Guess candidate name from upload filename, e.g. ``AzizbekGulomov_CV.pdf``.
+        """
+        stem = Path(filename).stem
+        stem = re.sub(r"(?i)[_\-]?(cv|resume|curriculum\s*vitae)[_\-]?", " ", stem)
+        stem = stem.strip(" _-.")
+        if not stem:
+            return None
+        # camelCase / PascalCase -> words
+        spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", stem)
+        spaced = re.sub(r"[_\-.]+", " ", spaced)
+        words = re.findall(r"[A-Za-zÀ-ÿ']+", spaced)
+        if 2 <= len(words) <= 6:
+            return " ".join(w.capitalize() for w in words)
+        if len(words) == 1 and 2 < len(words[0]) < 40:
+            return words[0][:1].upper() + words[0][1:].lower()
+        return None
+    
+    def extract_candidate_name(self, text: str, filename: str) -> Optional[str]:
+        """
+        Best-effort name: filename first, then first plausible header line in text.
+        """
+        from_file = self._name_from_filename(filename)
+        if from_file:
+            return from_file[:200]
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        for line in lines[:8]:
+            if "@" in line or len(line) > 70:
+                continue
+            if re.search(r"\d{3}[-.\s]?\d{2}", line):
+                continue
+            # 2–5 title-case / letter words (Latin + common UTF-8 letters)
+            if re.match(
+                r"^[\w'\-]+\s+[\w'\-]+(?:\s+[\w'\-]+){0,3}$",
+                line,
+                re.UNICODE,
+            ) and not line.lower().startswith("http"):
+                return line[:200]
+        return None
+    
     def extract_skills(self, text: str) -> List[str]:
         """
         Extract skills from CV text using keyword matching.
@@ -294,6 +335,7 @@ class CVParserService:
             dict: Structured CV information
         """
         try:
+            basename = Path(file_path).name
             # Extract text from file
             text = self.extract_text(file_path)
             
@@ -303,6 +345,7 @@ class CVParserService:
             # Extract structured information
             result = {
                 'extracted_text': text,
+                'name': self.extract_candidate_name(text, basename),
                 'email': self.extract_email(text),
                 'phone': self.extract_phone(text),
                 'skills': self.extract_skills(text),
@@ -319,6 +362,7 @@ class CVParserService:
             logger.error(f"Failed to parse CV {file_path}: {str(e)}")
             return {
                 'extracted_text': "",
+                'name': None,
                 'email': None,
                 'phone': None,
                 'skills': [],

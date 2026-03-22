@@ -1,19 +1,14 @@
 """
 Serializers for candidate management.
 """
-import uuid
-
 from rest_framework import serializers
 from .models import Candidate
 
 
 class CandidateUploadSerializer(serializers.ModelSerializer):
     """
-    Serializer for candidate CV upload.
-
-    Accepts multipart/form-data. File may be sent as ``cv_file`` (preferred),
-    ``file``, or ``cv`` (common in frontends). Name/email may be omitted and
-    filled after parsing, or use aliases ``full_name`` / ``fullName``.
+    Upload CV file only (multipart). Optional name/email/phone — usually omitted;
+    profile is filled by OpenAI extraction from file text.
     """
 
     file = serializers.FileField(write_only=True, required=False)
@@ -41,7 +36,6 @@ class CandidateUploadSerializer(serializers.ModelSerializer):
         }
 
     def validate_cv_file(self, value):
-        """Validate CV file format."""
         if value:
             self._validate_file_extension_and_size(value)
         return value
@@ -66,37 +60,31 @@ class CandidateUploadSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("File size cannot exceed 10MB.")
 
     def validate(self, attrs):
-        """Resolve file aliases and optional name/email."""
         cv_file = attrs.get("cv_file") or attrs.pop("file", None) or attrs.pop("cv", None)
         if cv_file is None:
             raise serializers.ValidationError(
-                {"cv_file": ["No file was submitted. Send the file as form field cv_file, file, or cv."]}
+                {"cv_file": ["No file was submitted. Use form field cv_file, file, or cv."]}
             )
         attrs["cv_file"] = cv_file
 
         data = getattr(self, "initial_data", None) or {}
-        if hasattr(data, "get"):
-            name = (attrs.get("name") or "").strip()
-            if not name:
-                name = (
-                    (data.get("full_name") or data.get("fullName") or data.get("candidate_name") or "")
-                    .strip()
-                )
-            attrs["name"] = name if name else "Unknown candidate"
+        # Optional manual overrides (rare); default empty — filled after OpenAI parse
+        name = (attrs.get("name") or "").strip()
+        if not name and hasattr(data, "get"):
+            name = (
+                (data.get("full_name") or data.get("fullName") or data.get("candidate_name") or "")
+                .strip()
+            )
+        attrs["name"] = name[:200] if name else ""
 
-            email = (attrs.get("email") or "").strip()
-            if not email:
-                email = (data.get("contact_email") or data.get("contactEmail") or "").strip()
-            if not email:
-                attrs["email"] = f"pending-{uuid.uuid4().hex[:12]}@parsed.invalid"
-            else:
-                attrs["email"] = email
-        else:
-            attrs.setdefault("name", "Unknown candidate")
-            if not (attrs.get("email") or "").strip():
-                attrs["email"] = f"pending-{uuid.uuid4().hex[:12]}@parsed.invalid"
+        email = (attrs.get("email") or "").strip()
+        if not email and hasattr(data, "get"):
+            email = (data.get("contact_email") or data.get("contactEmail") or "").strip()
+        attrs["email"] = email[:254] if email else ""
 
-        # Do not pass write-only helper fields to Candidate.objects.create
+        phone = (attrs.get("phone") or "").strip()
+        attrs["phone"] = phone[:15] if phone else ""
+
         attrs.pop("file", None)
         attrs.pop("cv", None)
         attrs.pop("full_name", None)
@@ -112,19 +100,20 @@ class CandidateSerializer(serializers.ModelSerializer):
     file_extension = serializers.ReadOnlyField()
     has_embedding = serializers.ReadOnlyField()
     uploaded_by_username = serializers.CharField(
-        source='uploaded_by.username', 
+        source='uploaded_by.username',
         read_only=True
     )
-    
+
     class Meta:
         model = Candidate
         fields = [
             'id', 'name', 'email', 'phone', 'cv_file', 'file_extension',
             'skills', 'experience_years', 'education', 'has_embedding',
+            'ai_profile_json',
             'uploaded_by_username', 'created_at', 'updated_at', 'is_active'
         ]
         read_only_fields = [
-            'id', 'extracted_text', 'embedding_vector', 
+            'id', 'extracted_text', 'embedding_vector',
             'created_at', 'updated_at'
         ]
 

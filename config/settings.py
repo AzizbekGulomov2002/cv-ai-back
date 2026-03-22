@@ -184,6 +184,8 @@ CORS_ALLOW_CREDENTIALS = True
 
 # OpenAI API Configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+# Model for structured CV parsing (chat completions + JSON)
+OPENAI_CV_MODEL = os.getenv('OPENAI_CV_MODEL', 'gpt-4o-mini')
 
 # File Upload Settings
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10MB
