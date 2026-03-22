@@ -2,7 +2,8 @@
 Views for candidate management and CV processing.
 """
 from rest_framework import generics, status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 import logging
 
@@ -20,11 +21,15 @@ logger = logging.getLogger(__name__)
 
 
 @api_view(['POST'])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
 def upload_cv(request):
     """
     Upload and process a candidate's CV.
+
+    Use ``multipart/form-data``. Pass the file as ``cv_file``, ``file``, or ``cv``.
+    Always pass ``files=request.FILES`` so the file is bound (fixes empty FILES on some hosts).
     """
-    serializer = CandidateUploadSerializer(data=request.data)
+    serializer = CandidateUploadSerializer(data=request.data, files=request.FILES or None)
     
     if serializer.is_valid():
         try:
