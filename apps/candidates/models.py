@@ -57,11 +57,11 @@ class Candidate(models.Model):
         help_text='Education information'
     )
 
-    # Full structured output from OpenAI (or heuristic fallback) for audit / UI
+    # To‘liq strukturalangan chiqish (OpenAI / Gemini JSON) — audit va UI
     ai_profile_json = models.JSONField(
         default=dict,
         blank=True,
-        help_text='Structured CV profile from OpenAI JSON extraction',
+        help_text='Structured CV profile from LLM (OpenAI/Gemini) file extraction',
     )
     
     # Embeddings

@@ -5,9 +5,9 @@ Django==4.2.7
 djangorestframework==3.14.0
 django-cors-headers==4.3.1
 python-dotenv==1.0.0
-openai==1.3.5
+# Responses API + Files API uchun yangi SDK kerak (PDF faylni OpenAI o‘qiydi)
+openai>=1.70.0
+google-generativeai>=0.8.0
 PyPDF2==3.0.1
-pypdf>=4.0.0
-PyMuPDF>=1.24.0
 python-docx==0.8.11
 numpy>=2.0,<3

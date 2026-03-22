@@ -184,8 +184,17 @@ CORS_ALLOW_CREDENTIALS = True
 
 # OpenAI API Configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-# Model for structured CV parsing (chat completions + JSON)
-OPENAI_CV_MODEL = os.getenv('OPENAI_CV_MODEL', 'gpt-4o-mini')
+# CV fayl (PDF/DOCX) — Responses API + input_file; tavsiya: gpt-4o
+OPENAI_CV_MODEL = os.getenv('OPENAI_CV_MODEL', 'gpt-4o')
+
+# Google Gemini (AI Studio) — quota tugaganda yoki faqat Gemini: CV fayl pipeline
+# https://aistudio.google.com/apikey
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')  # ba'zan bir xil kalit nomi
+# 1.5 qisqa nomlari (gemini-1.5-flash) ko‘pincha 404 — rasmiy: gemini-2.5-flash yoki gemini-flash-latest
+GEMINI_CV_MODEL = os.getenv('GEMINI_CV_MODEL', 'gemini-2.5-flash')
+# auto | openai | gemini — auto: avval OpenAI, 429/quota bo'lsa Gemini
+CV_EXTRACT_PROVIDER = os.getenv('CV_EXTRACT_PROVIDER', 'auto')
 
 # File Upload Settings
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10MB
