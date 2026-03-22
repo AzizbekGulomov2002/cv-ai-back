@@ -82,6 +82,8 @@ Tizim xizmat-orientlangan arxitektura asosida qurilgan:
    ```bash
    pip install -r requirements.txt
    ```
+   Asosiy ro‘yxat **minimal** (PythonAnywhere disk uchun): Django, DRF, `openai`, `google-generativeai`, `numpy` va lokal PDF kutubxonalari **yo‘q** — embeddinglar `math`/`random` bilan hisoblanadi.  
+   Lokal `parser_service` orqali PDF/DOCX dan to‘g‘ridan-to‘g‘ri matn kerak bo‘lsa: `pip install -r requirements-optional.txt`.
 
 4. **Muhit o'zgaruvchilarini sozlang:**
    ```bash

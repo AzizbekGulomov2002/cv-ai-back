@@ -82,6 +82,8 @@ The system follows a service-oriented architecture where:
    ```bash
    pip install -r requirements.txt
    ```
+   The main file is **minimal** (smaller disk use on PythonAnywhere): no `numpy` or local PDF libraries — embeddings use pure `math`/`random`.  
+   For optional local PDF/DOCX text extraction via `parser_service`, also run: `pip install -r requirements-optional.txt`.
 
 4. **Configure environment variables:**
    ```bash

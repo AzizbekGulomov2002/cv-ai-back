@@ -1,10 +1,13 @@
 """
 Embedding service for generating and managing text embeddings using OpenAI API.
 Includes fallback to dummy embeddings when API key is not available.
+
+Cosine similarity va dummy vektorlar — faqat ``math`` / ``random`` (numpy yo‘q, yengil deploy).
 """
 import hashlib
 import logging
-import numpy as np
+import math
+import random
 from typing import List, Dict, Optional, Tuple
 from django.conf import settings
 
@@ -128,15 +131,14 @@ class EmbeddingService:
         Returns:
             List[float]: Dummy embedding vector
         """
-        # Use text hash to generate reproducible dummy embedding
+        # Use text hash to generate reproducible dummy embedding (stdlib only)
         hash_int = int(self._generate_content_hash(text)[:16], 16)
-        np.random.seed(hash_int % (2**32))
-        
-        # Generate random vector and normalize
-        embedding = np.random.randn(dimensions).astype(float)
-        embedding = embedding / np.linalg.norm(embedding)
-        
-        return embedding.tolist()
+        rng = random.Random(hash_int % (2**32))
+        embedding = [rng.gauss(0.0, 1.0) for _ in range(dimensions)]
+        norm = math.sqrt(sum(x * x for x in embedding))
+        if norm == 0.0:
+            return embedding
+        return [x / norm for x in embedding]
     
     def generate_embedding(self, text: str, content_type: str = "text", 
                           model: str = DEFAULT_MODEL) -> Tuple[List[float], bool]:
@@ -233,21 +235,15 @@ class EmbeddingService:
         
         if len(embedding1) != len(embedding2):
             raise ValueError("Embeddings must have the same dimensions")
-        
-        # Convert to numpy arrays
-        vec1 = np.array(embedding1)
-        vec2 = np.array(embedding2)
-        
-        # Calculate cosine similarity
-        dot_product = np.dot(vec1, vec2)
-        norm1 = np.linalg.norm(vec1)
-        norm2 = np.linalg.norm(vec2)
-        
-        if norm1 == 0 or norm2 == 0:
+
+        dot_product = sum(a * b for a, b in zip(embedding1, embedding2))
+        norm1 = math.sqrt(sum(a * a for a in embedding1))
+        norm2 = math.sqrt(sum(b * b for b in embedding2))
+
+        if norm1 == 0.0 or norm2 == 0.0:
             return 0.0
-        
-        similarity = dot_product / (norm1 * norm2)
-        return float(similarity)
+
+        return float(dot_product / (norm1 * norm2))
     
     def calculate_similarity_score(self, embedding1: List[float], embedding2: List[float]) -> float:
         """

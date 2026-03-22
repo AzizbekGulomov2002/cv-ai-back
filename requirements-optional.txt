@@ -1,0 +1,6 @@
+# Ixtiyoriy: services/parser_service.py lokal PDF/DOCX matn chiqarish (upload yo‘lida LLM ishlatiladi)
+# pip install -r requirements-optional.txt
+PyMuPDF>=1.24.0
+pypdf>=4.0.0
+PyPDF2>=3.0.0
+python-docx>=0.8.11

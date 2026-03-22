@@ -1,13 +1,9 @@
-# Cosine similarity uses numpy only — scikit-learn is not used in this project.
-# On Python 3.13, old scikit-learn pins force a source build and often fail (Cython errors).
-
+# Minimal — PythonAnywhere / kichik disk uchun (numpy / lokal PDF kutubxonalari yo‘q)
 Django==4.2.7
 djangorestframework==3.14.0
 django-cors-headers==4.3.1
 python-dotenv==1.0.0
-# Responses API + Files API uchun yangi SDK kerak (PDF faylni OpenAI o‘qiydi)
-openai>=1.70.0
-google-generativeai>=0.8.0
-PyPDF2==3.0.1
-python-docx==0.8.11
-numpy>=2.0,<3
+# CV fayl: OpenAI Responses + Files; embedding
+openai>=1.70.0,<2
+# CV fayl: Gemini fallback
+google-generativeai>=0.8.0,<1
