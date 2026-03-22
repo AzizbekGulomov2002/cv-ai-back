@@ -21,6 +21,8 @@
 `POST /api/candidates/upload/`  
 `Content-Type: multipart/form-data` — field: `file` / `cv` / `cv_file`
 
+**Ixtiyoriy:** `job_id` (form maydon yoki query `?job_id=1`) — yuklashdan keyin shu job uchun **score**, **skill_breakdown**, **matched/missing skills**, **explanation** (summary/details), **fairness**, **audit**, **rank** (oxirgi sessiyada bo‘lsa) qaytariladi. To‘liq DB obyekti avvalgidek `candidate` ichida; qisqa kartochka: `candidate_profile`.
+
 ### Response `201` (asosiy qismlar)
 
 ```json

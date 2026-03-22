@@ -15,7 +15,10 @@ from apps.audit.models import AuditLog
 from services.api_actor import get_api_actor
 from services.embedding_service import EmbeddingService
 from services.cv_file_extract import extract_structured_profile_from_cv_file
+from services.job_match_payload import build_job_evaluation_payload
 from services.parser_service import CVParserService
+from services.ranking_service import RankingService
+from apps.jobs.models import Job
 from .models import Candidate
 from .serializers import (
     CandidateDetailSerializer,
@@ -136,6 +139,9 @@ def upload_cv(request):
     CV faylini yuklash. PDF/DOCX **lokal tahlil qilinmaydi** — fayl OpenAI yoki Gemini
     orqali yuboriladi (``CV_EXTRACT_PROVIDER``), JSON natija saqlanadi.
     Kamida bittasi kerak: ``OPENAI_API_KEY`` yoki ``GEMINI_API_KEY`` / ``GOOGLE_API_KEY``.
+
+    Ixtiyoriy: ``job_id`` (form yoki ``?job_id=``) — yuklashdan keyin shu vakansiyaga
+    moslik: ``score``, ``skill_breakdown``, ``explanation``, ``ranking`` (oxirgi sessiya bo‘yicha).
     """
     if request.FILES:
         data = request.POST.copy()
@@ -143,6 +149,12 @@ def upload_cv(request):
             data[key] = request.FILES[key]
     else:
         data = request.data
+
+    job_id_raw = None
+    if hasattr(data, "get"):
+        job_id_raw = data.get("job_id")
+    if job_id_raw in (None, ""):
+        job_id_raw = request.query_params.get("job_id")
 
     serializer = CandidateUploadSerializer(data=data)
 
@@ -249,6 +261,41 @@ def upload_cv(request):
             )
         if (profile or {}).get("gemini_model"):
             body["gemini_model"] = profile.get("gemini_model")
+
+        # --- Job bilan baholash (frontend: score, skill_breakdown, WHY, rank) ---
+        if job_id_raw not in (None, ""):
+            try:
+                jid = int(job_id_raw)
+            except (TypeError, ValueError):
+                body["job_evaluation_error"] = "invalid_job_id"
+            else:
+                job = Job.objects.filter(pk=jid, is_active=True).first()
+                if not job:
+                    body["job_evaluation_error"] = "job_not_found"
+                else:
+                    try:
+                        candidate.refresh_from_db()
+                        ranking_service = RankingService()
+                        ranking_service.ensure_embeddings(
+                            Candidate.objects.filter(pk=candidate.pk), job
+                        )
+                        candidate.refresh_from_db()
+                        ev = ranking_service.evaluate_candidate_for_job(candidate, job)
+                        match_report = build_job_evaluation_payload(
+                            candidate, job, profile, ev
+                        )
+                        body["match_report"] = match_report
+                        # Frontend-ready root (to‘liq ``candidate`` DB serializer alohida saqlanadi)
+                        body["ranking"] = match_report["ranking"]
+                        body["matching"] = match_report["matching"]
+                        body["explanation"] = match_report["explanation"]
+                        body["fairness"] = match_report["fairness"]
+                        body["audit"] = match_report["audit"]
+                        body["job_context"] = match_report["job"]
+                        body["candidate_profile"] = match_report["candidate"]
+                    except Exception as e:
+                        logger.exception("Job match on upload failed: %s", e)
+                        body["job_evaluation_error"] = str(e)
 
         return Response(body, status=status.HTTP_201_CREATED)
 

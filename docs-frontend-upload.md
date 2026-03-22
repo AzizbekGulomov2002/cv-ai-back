@@ -45,8 +45,17 @@ CV_EXTRACT_PROVIDER=auto
 ```javascript
 const fd = new FormData();
 fd.append("file", pdfFile, pdfFile.name);
+// Ixtiyoriy: vakansiya bilan darhol moslik (score, skill_breakdown, explanation, rank)
+fd.append("job_id", String(jobId));
 await fetch("/api/candidates/upload/", { method: "POST", body: fd });
+// yoki: POST .../upload/?job_id=1
 ```
+
+### `job_id` berilganda (201)
+
+Root maydonlar: `ranking` (`score`, `rank`, `total_candidates`), `matching` (`skills_match_percentage`, `matched_skills`, `missing_skills`, `skill_breakdown`, `match_breakdown`), `explanation` (`summary`, `details`), `fairness`, `audit`, `job_context`, `candidate_profile` (qisqa id/name/skills), `match_report` (bularning barchasi bitta obyektda).
+
+`rank` faqat **oxirgi ranking sessiyasida** bu nomzod bo‘lsa to‘ldiriladi; aks holda `null` (keyin `POST /api/ranking/run/` qiling).
 
 ## Muvaffaqiyatli javob (201)
 
