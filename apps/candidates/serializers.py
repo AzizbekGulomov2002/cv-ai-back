@@ -103,6 +103,16 @@ class CandidateSerializer(serializers.ModelSerializer):
         source='uploaded_by.username',
         read_only=True
     )
+    job_match_score = serializers.SerializerMethodField()
+    job_match_rank = serializers.SerializerMethodField()
+
+    @staticmethod
+    def get_job_match_score(obj):
+        return getattr(obj, "_job_match_score", None)
+
+    @staticmethod
+    def get_job_match_rank(obj):
+        return getattr(obj, "_job_match_rank", None)
 
     class Meta:
         model = Candidate
@@ -111,7 +121,8 @@ class CandidateSerializer(serializers.ModelSerializer):
             'skills', 'experience_years', 'education', 'professional_summary',
             'fairness_scan_json', 'has_embedding',
             'ai_profile_json',
-            'uploaded_by_username', 'created_at', 'updated_at', 'is_active'
+            'uploaded_by_username', 'created_at', 'updated_at', 'is_active',
+            'job_match_score', 'job_match_rank',
         ]
         read_only_fields = [
             'id', 'extracted_text', 'embedding_vector',

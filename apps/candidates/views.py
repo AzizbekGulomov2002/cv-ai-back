@@ -6,6 +6,8 @@ import os
 import re
 
 from django.conf import settings
+from django.db.models import F, FloatField, IntegerField, OuterRef, Subquery, Value
+from django.db.models.functions import Coalesce
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -15,10 +17,13 @@ from apps.audit.models import AuditLog
 from services.api_actor import get_api_actor
 from services.embedding_service import EmbeddingService
 from services.cv_file_extract import extract_structured_profile_from_cv_file
-from services.job_match_payload import build_job_evaluation_payload
+from services.job_match_payload import build_job_evaluation_payload, format_frontend_job_bundle
 from services.parser_service import CVParserService
 from services.ranking_service import RankingService
 from apps.jobs.models import Job
+from apps.ranking.models import CandidateRanking, RankingSession
+
+from .pagination import CandidateListPagination
 from .models import Candidate
 from .serializers import (
     CandidateDetailSerializer,
@@ -284,15 +289,17 @@ def upload_cv(request):
                         match_report = build_job_evaluation_payload(
                             candidate, job, profile, ev
                         )
+                        fe = format_frontend_job_bundle(match_report)
+                        body["job_evaluation"] = fe
                         body["match_report"] = match_report
-                        # Frontend-ready root (to‘liq ``candidate`` DB serializer alohida saqlanadi)
-                        body["ranking"] = match_report["ranking"]
-                        body["matching"] = match_report["matching"]
-                        body["explanation"] = match_report["explanation"]
-                        body["fairness"] = match_report["fairness"]
-                        body["audit"] = match_report["audit"]
-                        body["job_context"] = match_report["job"]
-                        body["candidate_profile"] = match_report["candidate"]
+                        body["score"] = fe["ranking"]["score"]
+                        body["ranking"] = fe["ranking"]
+                        body["matching"] = fe["matching"]
+                        body["explanation"] = fe["explanation"]
+                        body["fairness"] = fe["fairness"]
+                        body["audit"] = fe["audit"]
+                        body["job_context"] = fe.get("job")
+                        body["candidate_profile"] = fe["candidate"]
                     except Exception as e:
                         logger.exception("Job match on upload failed: %s", e)
                         body["job_evaluation_error"] = str(e)
@@ -310,8 +317,13 @@ def upload_cv(request):
 class CandidateListView(generics.ListAPIView):
     """
     List all active candidates.
+
+    Query: ``?job_id=<id>`` — shu job bo‘yicha **oxirgi ranking sessiyasi** dagi
+    ``ai_score`` bo‘yicha kamayish tartibida (yuqori ball birinchi). Sessiya bo‘lmasa
+    — oddiy ``-created_at``. Sahifa: **10** ta (``page``, ``page_size``).
     """
     serializer_class = CandidateSerializer
+    pagination_class = CandidateListPagination
 
     def get_queryset(self):
         queryset = Candidate.objects.filter(is_active=True)
@@ -332,7 +344,59 @@ class CandidateListView(generics.ListAPIView):
             except ValueError:
                 pass
 
-        return queryset.order_by('-created_at')
+        job_id = self.request.query_params.get("job_id")
+        if job_id:
+            try:
+                jid = int(job_id)
+            except ValueError:
+                return queryset.order_by("-created_at")
+
+            session = (
+                RankingSession.objects.filter(job_id=jid, job__is_active=True)
+                .order_by("-created_at")
+                .first()
+            )
+            if session:
+                score_sq = CandidateRanking.objects.filter(
+                    session_id=session.pk,
+                    candidate_id=OuterRef("pk"),
+                ).values("ai_score")[:1]
+                rank_sq = CandidateRanking.objects.filter(
+                    session_id=session.pk,
+                    candidate_id=OuterRef("pk"),
+                ).values("ai_rank")[:1]
+                queryset = queryset.annotate(
+                    _job_match_score=Subquery(score_sq, output_field=FloatField()),
+                    _job_match_rank=Subquery(rank_sq, output_field=IntegerField()),
+                ).order_by(
+                    Coalesce(F("_job_match_score"), Value(-1.0)).desc(),
+                    "-created_at",
+                )
+            else:
+                queryset = queryset.order_by("-created_at")
+        else:
+            queryset = queryset.order_by("-created_at")
+
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        job_id_raw = request.query_params.get("job_id")
+        response = super().list(request, *args, **kwargs)
+        if job_id_raw and isinstance(response.data, dict):
+            try:
+                jid = int(job_id_raw)
+            except ValueError:
+                return response
+            response.data["job_id"] = jid
+            session = (
+                RankingSession.objects.filter(job_id=jid, job__is_active=True)
+                .order_by("-created_at")
+                .first()
+            )
+            response.data["ranking_session_applied"] = bool(session)
+            if session:
+                response.data["ranking_session_id"] = session.pk
+        return response
 
 
 class CandidateDetailView(generics.RetrieveAPIView):

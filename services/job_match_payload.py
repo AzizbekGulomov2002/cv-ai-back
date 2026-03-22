@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from apps.candidates.models import Candidate
 from apps.jobs.models import Job
@@ -163,6 +163,45 @@ def build_audit_block(profile: Dict[str, Any]) -> Dict[str, Any]:
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "model": "embedding_similarity_v1+dimensions",
         "extraction": "+".join(model_parts),
+    }
+
+
+def format_frontend_job_bundle(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Frontend ideal struktura: candidate, ranking, matching (skill_match = skill_breakdown),
+    explanation, fairness (faqat bias_detected + notes), audit (model nomi qisqa).
+    """
+    r = raw.get("ranking") or {}
+    m = raw.get("matching") or {}
+    sb = dict(m.get("skill_breakdown") or {})
+    fair = raw.get("fairness") or {}
+    aud = raw.get("audit") or {}
+    notes = fair.get("notes")
+    return {
+        "candidate": raw.get("candidate") or {},
+        "job": raw.get("job"),
+        "ranking": {
+            "score": r.get("score", 0),
+            "rank": r.get("rank"),
+            "total_candidates": r.get("total_candidates", 0),
+        },
+        "matching": {
+            "skills_match_percentage": m.get("skills_match_percentage"),
+            "matched_skills": list(m.get("matched_skills") or []),
+            "missing_skills": list(m.get("missing_skills") or []),
+            "skill_breakdown": sb,
+            "skill_match": sb,
+            "match_breakdown": m.get("match_breakdown") or {},
+        },
+        "explanation": raw.get("explanation") or {"summary": "", "details": ""},
+        "fairness": {
+            "bias_detected": bool(fair.get("bias_detected")),
+            "notes": notes if notes else None,
+        },
+        "audit": {
+            "generated_at": aud.get("generated_at"),
+            "model": "embedding_similarity_v1",
+        },
     }
 
 
