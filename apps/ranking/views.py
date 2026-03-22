@@ -2,8 +2,7 @@
 Views for AI-powered candidate ranking system.
 """
 from rest_framework import generics, status
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 import logging
@@ -11,19 +10,18 @@ import logging
 from apps.audit.models import AuditLog
 from apps.candidates.models import Candidate
 from apps.jobs.models import Job
+from services.api_actor import get_api_actor
 from services.ranking_service import RankingService
 from .models import RankingSession, CandidateRanking
 from .serializers import (
     RankingSessionSerializer, CandidateRankingSerializer,
     RankingRunSerializer, HumanOverrideSerializer,
-    RankingAnalyticsSerializer
 )
 
 logger = logging.getLogger(__name__)
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
 def run_ranking(request):
     """
     Run AI ranking for candidates against a job.
@@ -53,11 +51,12 @@ def run_ranking(request):
                 }, status=status.HTTP_400_BAD_REQUEST)
             
             # Run the ranking process
+            actor = get_api_actor(request)
             ranking_service = RankingService()
             session = ranking_service.rank_candidates_for_job(
                 job=job,
                 candidates=candidates,
-                user=request.user
+                user=actor
             )
             
             # Update session notes if provided
@@ -67,7 +66,7 @@ def run_ranking(request):
             
             # Log the ranking action
             AuditLog.log_ranking_action(
-                user=request.user,
+                user=actor,
                 job=job,
                 candidates_count=candidates.count(),
                 ai_confidence=85.0,  # Mock confidence score
@@ -111,7 +110,6 @@ def run_ranking(request):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
 def get_job_rankings(request, job_id):
     """
     Get rankings for a specific job.
@@ -157,7 +155,6 @@ def get_job_rankings(request, job_id):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
 def override_ranking(request, ranking_id):
     """
     Human override of AI ranking decision.
@@ -170,18 +167,19 @@ def override_ranking(request, ranking_id):
             decision = serializer.validated_data['human_decision']
             score = serializer.validated_data.get('human_score')
             feedback = serializer.validated_data.get('human_feedback', '')
+            actor = get_api_actor(request)
             
             # Apply human override
             ranking.set_human_override(
                 decision=decision,
-                user=request.user,
+                user=actor,
                 score=score,
                 feedback=feedback
             )
             
             # Log the override action
             AuditLog.log_human_override(
-                user=request.user,
+                user=actor,
                 ranking=ranking,
                 decision=decision,
                 metadata={
@@ -215,7 +213,6 @@ def override_ranking(request, ranking_id):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
 def get_ranking_analytics(request):
     """
     Get ranking analytics and performance metrics.
@@ -256,7 +253,6 @@ class RankingSessionListView(generics.ListAPIView):
     List all ranking sessions.
     """
     serializer_class = RankingSessionSerializer
-    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         queryset = RankingSession.objects.all().order_by('-created_at')
@@ -274,5 +270,4 @@ class CandidateRankingDetailView(generics.RetrieveAPIView):
     Get detailed information about a specific ranking.
     """
     serializer_class = CandidateRankingSerializer
-    permission_classes = [IsAuthenticated]
     queryset = CandidateRanking.objects.all()

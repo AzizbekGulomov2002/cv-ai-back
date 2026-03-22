@@ -2,8 +2,7 @@
 Views for audit log access and compliance reporting.
 """
 from rest_framework import generics
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.db.models import Q
 from django.utils import timezone
@@ -18,7 +17,6 @@ class AuditLogListView(generics.ListAPIView):
     List audit logs with filtering capabilities.
     """
     serializer_class = AuditLogSerializer
-    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         queryset = AuditLog.objects.all()
@@ -59,7 +57,6 @@ class AuditLogListView(generics.ListAPIView):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
 def audit_statistics(request):
     """
     Get audit log statistics.

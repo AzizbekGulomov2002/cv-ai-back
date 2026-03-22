@@ -2,13 +2,12 @@
 Views for candidate management and CV processing.
 """
 from rest_framework import generics, status
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from django.shortcuts import get_object_or_404
 import logging
 
 from apps.audit.models import AuditLog
+from services.api_actor import get_api_actor
 from services.parser_service import CVParserService
 from services.embedding_service import EmbeddingService
 from .models import Candidate
@@ -21,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
 def upload_cv(request):
     """
     Upload and process a candidate's CV.
@@ -31,11 +29,12 @@ def upload_cv(request):
     if serializer.is_valid():
         try:
             # Save the candidate with uploaded file
-            candidate = serializer.save(uploaded_by=request.user)
+            actor = get_api_actor(request)
+            candidate = serializer.save(uploaded_by=actor)
             
             # Log the upload action
             AuditLog.log_cv_upload(
-                user=request.user,
+                user=actor,
                 candidate=candidate,
                 metadata={
                     'file_name': candidate.cv_file.name,
@@ -123,7 +122,6 @@ class CandidateListView(generics.ListAPIView):
     List all active candidates.
     """
     serializer_class = CandidateSerializer
-    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         queryset = Candidate.objects.filter(is_active=True)
@@ -163,7 +161,6 @@ class CandidateDetailView(generics.RetrieveAPIView):
     Get detailed candidate information.
     """
     serializer_class = CandidateDetailSerializer
-    permission_classes = [IsAuthenticated]
     queryset = Candidate.objects.all()
 
 
@@ -172,7 +169,6 @@ class CandidateUpdateView(generics.UpdateAPIView):
     Update candidate information.
     """
     serializer_class = CandidateUpdateSerializer
-    permission_classes = [IsAuthenticated]
     queryset = Candidate.objects.all()
     
     def perform_update(self, serializer):
@@ -180,7 +176,7 @@ class CandidateUpdateView(generics.UpdateAPIView):
         
         # Log the update action
         AuditLog.log_action(
-            user=self.request.user,
+            user=get_api_actor(self.request),
             action_type='update',
             description=f"Updated candidate {candidate.name}",
             content_object=candidate,
@@ -193,7 +189,6 @@ class CandidateDeleteView(generics.DestroyAPIView):
     """
     Delete (deactivate) a candidate.
     """
-    permission_classes = [IsAuthenticated]
     queryset = Candidate.objects.all()
     
     def perform_destroy(self, instance):
@@ -203,7 +198,7 @@ class CandidateDeleteView(generics.DestroyAPIView):
         
         # Log the deletion action
         AuditLog.log_action(
-            user=self.request.user,
+            user=get_api_actor(self.request),
             action_type='delete',
             description=f"Deactivated candidate {instance.name}",
             content_object=instance,

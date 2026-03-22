@@ -1,12 +1,11 @@
 """
 Views for job management.
 """
-from rest_framework import generics, status
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
+from rest_framework import generics
 import logging
 
 from apps.audit.models import AuditLog
+from services.api_actor import get_api_actor
 from services.embedding_service import EmbeddingService
 from .models import Job
 from .serializers import JobCreateSerializer, JobSerializer, JobUpdateSerializer
@@ -19,10 +18,10 @@ class JobCreateView(generics.CreateAPIView):
     Create a new job posting.
     """
     serializer_class = JobCreateSerializer
-    permission_classes = [IsAuthenticated]
     
     def perform_create(self, serializer):
-        job = serializer.save(created_by=self.request.user)
+        actor = get_api_actor(self.request)
+        job = serializer.save(created_by=actor)
         
         # Generate embedding for the job
         try:
@@ -39,7 +38,7 @@ class JobCreateView(generics.CreateAPIView):
         
         # Log the creation action
         AuditLog.log_action(
-            user=self.request.user,
+            user=actor,
             action_type='create',
             description=f"Created job posting: {job.title}",
             content_object=job,
@@ -53,7 +52,6 @@ class JobListView(generics.ListAPIView):
     List all active job postings.
     """
     serializer_class = JobSerializer
-    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         queryset = Job.objects.filter(is_active=True)
@@ -92,7 +90,6 @@ class JobDetailView(generics.RetrieveAPIView):
     Get detailed job information.
     """
     serializer_class = JobSerializer
-    permission_classes = [IsAuthenticated]
     queryset = Job.objects.all()
 
 
@@ -101,7 +98,6 @@ class JobUpdateView(generics.UpdateAPIView):
     Update job information.
     """
     serializer_class = JobUpdateSerializer
-    permission_classes = [IsAuthenticated]
     queryset = Job.objects.all()
     
     def perform_update(self, serializer):
@@ -123,7 +119,7 @@ class JobUpdateView(generics.UpdateAPIView):
         
         # Log the update action
         AuditLog.log_action(
-            user=self.request.user,
+            user=get_api_actor(self.request),
             action_type='update',
             description=f"Updated job posting: {job.title}",
             content_object=job,
@@ -136,7 +132,6 @@ class JobDeleteView(generics.DestroyAPIView):
     """
     Delete (deactivate) a job posting.
     """
-    permission_classes = [IsAuthenticated]
     queryset = Job.objects.all()
     
     def perform_destroy(self, instance):
@@ -146,7 +141,7 @@ class JobDeleteView(generics.DestroyAPIView):
         
         # Log the deletion action
         AuditLog.log_action(
-            user=self.request.user,
+            user=get_api_actor(self.request),
             action_type='delete',
             description=f"Deactivated job posting: {instance.title}",
             content_object=instance,

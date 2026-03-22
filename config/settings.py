@@ -137,6 +137,11 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Custom User Model
 AUTH_USER_MODEL = 'users.User'
 
+# API auth: default open for demos / open-source frontends (no VITE_API_TOKEN).
+# Set API_REQUIRE_AUTH=true in production to require Token (or Session) on all endpoints
+# except those explicitly marked AllowAny (register/login).
+_API_REQUIRE_AUTH = os.getenv('API_REQUIRE_AUTH', 'false').lower() in ('1', 'true', 'yes')
+
 # Django REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
@@ -144,7 +149,9 @@ REST_FRAMEWORK = {
         'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
+        'rest_framework.permissions.IsAuthenticated'
+        if _API_REQUIRE_AUTH
+        else 'rest_framework.permissions.AllowAny',
     ],
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
