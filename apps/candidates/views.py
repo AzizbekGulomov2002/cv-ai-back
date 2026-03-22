@@ -35,6 +35,67 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 
+def _ranking_history_for_candidate(candidate: Candidate, limit: int = 40):
+    """Saqlangan ranking yozuvlari — har biri dimensionlar bilan (session/job kontekst)."""
+    rows = (
+        CandidateRanking.objects.filter(candidate=candidate)
+        .select_related("session", "session__job")
+        .order_by("-created_at")[:limit]
+    )
+    history = []
+    for cr in rows:
+        job = cr.session.job
+        mb = cr.match_breakdown if isinstance(cr.match_breakdown, dict) else {}
+        history.append(
+            {
+                "ranking_id": cr.id,
+                "session_id": cr.session_id,
+                "session_created_at": cr.session.created_at.isoformat()
+                if getattr(cr.session, "created_at", None)
+                else None,
+                "job": {
+                    "id": job.id,
+                    "title": job.title,
+                    "company": job.company,
+                },
+                "ai_score": cr.ai_score,
+                "ai_rank": cr.ai_rank,
+                "human_decision": cr.human_decision,
+                "is_reviewed": cr.is_reviewed,
+                "ranking_created_at": cr.created_at.isoformat()
+                if cr.created_at
+                else None,
+                "dimensions": mb.get("dimensions"),
+                "composite_score_stored": mb.get("composite_score"),
+                "match_breakdown": mb,
+                "explanation_preview": (cr.explanation or "")[:500],
+            }
+        )
+    return history
+
+
+def _live_match_dimensions_bundle(candidate: Candidate, job: Job) -> dict:
+    """Hozirgi job talablari bo‘yicha qayta hisoblangan o‘lchamlar (embedding + skills, …)."""
+    ranking_service = RankingService()
+    ranking_service.ensure_embeddings(
+        Candidate.objects.filter(pk=candidate.pk), job
+    )
+    candidate.refresh_from_db()
+    ev = ranking_service.evaluate_candidate_for_job(candidate, job)
+    mb = ev.get("match_breakdown") or {}
+    return {
+        "job": {"id": job.id, "title": job.title, "company": job.company},
+        "composite_score": ev.get("score"),
+        "dimensions": mb.get("dimensions"),
+        "weights": mb.get("weights"),
+        "human_in_the_loop_notice": mb.get("human_in_the_loop_notice"),
+        "fairness_notice": mb.get("fairness_notice"),
+        "matched_skills": ev.get("matched_skills"),
+        "missing_skills": ev.get("missing_skills"),
+        "source": "live_recomputed",
+    }
+
+
 def _apply_profile_dict_to_candidate(candidate: Candidate, profile: dict) -> None:
     """Map structured profile (OpenAI JSON) onto Candidate (not saved)."""
     if not profile:
@@ -415,10 +476,67 @@ class CandidateListView(generics.ListAPIView):
 
 class CandidateDetailView(generics.RetrieveAPIView):
     """
-    Get detailed candidate information.
+    Batafsil nomzod + ``ranking_history`` (har sessiya: ball, o‘rin, **dimensions**).
+
+    Query: ``job_id`` — live o‘lchamlar shu job bo‘yicha (yo‘q bo‘lsa va ``target_job``
+    bor bo‘lsa, ``target_job`` ishlatiladi). ``no_live_dimensions=1`` — qayta hisoblamaslik.
     """
     serializer_class = CandidateDetailSerializer
     queryset = Candidate.objects.all()
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        data = dict(serializer.data)
+
+        data["ranking_history"] = _ranking_history_for_candidate(instance)
+
+        job = None
+        jid = request.query_params.get("job_id")
+        if jid not in (None, ""):
+            try:
+                job = Job.objects.filter(pk=int(jid), is_active=True).first()
+            except ValueError:
+                data["job_id_error"] = "invalid_job_id"
+        if job is None and getattr(instance, "target_job_id", None):
+            job = instance.target_job
+
+        no_live = (request.query_params.get("no_live_dimensions") or "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if job and not no_live:
+            try:
+                data["match_dimensions_live"] = _live_match_dimensions_bundle(instance, job)
+            except Exception as e:
+                logger.exception("Live match dimensions failed: %s", e)
+                data["match_dimensions_live"] = None
+                data["match_dimensions_live_error"] = str(e)
+        else:
+            data["match_dimensions_live"] = None
+            if job and no_live:
+                data["match_dimensions_live_skipped"] = True
+
+        if getattr(instance, "target_job_id", None):
+            session = (
+                RankingSession.objects.filter(job_id=instance.target_job_id)
+                .order_by("-created_at")
+                .first()
+            )
+            if session:
+                cr = CandidateRanking.objects.filter(
+                    session=session, candidate=instance
+                ).first()
+                if cr:
+                    data["job_match_score"] = cr.ai_score
+                    data["job_match_rank"] = cr.ai_rank
+                    data["latest_ranking_session_for_target_job"] = {
+                        "session_id": session.id,
+                        "candidates_count": session.candidates_count,
+                    }
+
+        return Response(data)
 
 
 class CandidateUpdateView(generics.UpdateAPIView):
