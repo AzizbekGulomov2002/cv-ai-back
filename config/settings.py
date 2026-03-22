@@ -6,11 +6,11 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
-
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+# Loyiha ildizi (config/ dan bir pog‘ona yuqori) — har doim shu yerdagi .env o‘qiladi.
+# Sukutdagi load_dotenv() faqat joriy CWD dan qidiradi; PythonAnywhere / WSGI da CWD
+# boshqa bo‘lishi mumkin, shuning uchun kalitlar topilmas edi.
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
 
 
 # SECURITY WARNING: keep the secret key used in production secret!
