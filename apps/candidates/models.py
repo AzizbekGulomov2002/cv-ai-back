@@ -97,7 +97,17 @@ class Candidate(models.Model):
         default=True,
         help_text='Whether candidate profile is active'
     )
-    
+
+    # Qaysi vakansiyaga CV yuborilgani (upload da job_id bilan biriktiriladi)
+    target_job = models.ForeignKey(
+        "jobs.Job",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="targeted_candidates",
+        help_text="Nomzod ariza qilgan asosiy vakansiya (CV upload job_id)",
+    )
+
     class Meta:
         db_table = 'candidates'
         ordering = ['-created_at']

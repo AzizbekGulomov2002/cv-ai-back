@@ -5,6 +5,14 @@ from rest_framework import serializers
 from .models import Job
 
 
+class JobMiniSerializer(serializers.ModelSerializer):
+    """CV upload / ro‘yxatlar uchun qisqa job kartochkasi."""
+
+    class Meta:
+        model = Job
+        fields = ["id", "title", "company", "level", "location", "job_type"]
+
+
 class JobCreateSerializer(serializers.ModelSerializer):
     """
     Serializer for creating jobs.

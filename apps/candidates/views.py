@@ -145,8 +145,9 @@ def upload_cv(request):
     orqali yuboriladi (``CV_EXTRACT_PROVIDER``), JSON natija saqlanadi.
     Kamida bittasi kerak: ``OPENAI_API_KEY`` yoki ``GEMINI_API_KEY`` / ``GOOGLE_API_KEY``.
 
-    Ixtiyoriy: ``job_id`` (form yoki ``?job_id=``) — yuklashdan keyin shu vakansiyaga
-    moslik: ``score``, ``skill_breakdown``, ``explanation``, ``ranking`` (oxirgi sessiya bo‘yicha).
+    Ixtiyoriy: ``job_id`` (form yoki ``?job_id=``) — **tanlangan vakansiyaga biriktirish**
+    (`target_job` DB da), moslik: ``job_evaluation``, ``score``, ``skill_match``, ``explanation``,
+    ``ranking`` (oxirgi sessiya bo‘yicha). Vakansiya ro‘yxati: ``GET /api/jobs/for-upload/``.
     """
     if request.FILES:
         data = request.POST.copy()
@@ -278,6 +279,8 @@ def upload_cv(request):
                 if not job:
                     body["job_evaluation_error"] = "job_not_found"
                 else:
+                    candidate.target_job = job
+                    candidate.save(update_fields=["target_job", "updated_at"])
                     try:
                         candidate.refresh_from_db()
                         ranking_service = RankingService()
@@ -304,6 +307,9 @@ def upload_cv(request):
                         logger.exception("Job match on upload failed: %s", e)
                         body["job_evaluation_error"] = str(e)
 
+        # Serializer yangi target_job ni ko‘rsatishi uchun
+        body["candidate"] = CandidateSerializer(candidate).data
+
         return Response(body, status=status.HTTP_201_CREATED)
 
     except Exception as e:
@@ -320,7 +326,8 @@ class CandidateListView(generics.ListAPIView):
 
     Query: ``?job_id=<id>`` — shu job bo‘yicha **oxirgi ranking sessiyasi** dagi
     ``ai_score`` bo‘yicha kamayish tartibida (yuqori ball birinchi). Sessiya bo‘lmasa
-    — oddiy ``-created_at``. Sahifa: **10** ta (``page``, ``page_size``).
+    — oddiy ``-created_at``. ``?target_job_id=`` — faqat shu vakansiyaga biriktirilganlar.
+    Sahifa: **10** ta (``page``, ``page_size``).
     """
     serializer_class = CandidateSerializer
     pagination_class = CandidateListPagination
@@ -341,6 +348,13 @@ class CandidateListView(generics.ListAPIView):
             try:
                 min_exp = int(min_experience)
                 queryset = queryset.filter(experience_years__gte=min_exp)
+            except ValueError:
+                pass
+
+        target_job_id = self.request.query_params.get("target_job_id")
+        if target_job_id:
+            try:
+                queryset = queryset.filter(target_job_id=int(target_job_id))
             except ValueError:
                 pass
 

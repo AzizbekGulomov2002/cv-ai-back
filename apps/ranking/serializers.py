@@ -69,6 +69,11 @@ class RankingRunSerializer(serializers.Serializer):
         required=False, 
         help_text="Optional notes about this ranking session"
     )
+    only_target_job_candidates = serializers.BooleanField(
+        default=False,
+        required=False,
+        help_text="True bo‘lsa va candidate_ids berilmasa — faqat target_job_id=job_id bo‘lgan nomzodlar.",
+    )
 
 
 class HumanOverrideSerializer(serializers.Serializer):

@@ -2,6 +2,8 @@
 Serializers for candidate management.
 """
 from rest_framework import serializers
+
+from apps.jobs.serializers import JobMiniSerializer
 from .models import Candidate
 
 
@@ -105,6 +107,7 @@ class CandidateSerializer(serializers.ModelSerializer):
     )
     job_match_score = serializers.SerializerMethodField()
     job_match_rank = serializers.SerializerMethodField()
+    target_job = JobMiniSerializer(read_only=True)
 
     @staticmethod
     def get_job_match_score(obj):
@@ -122,7 +125,7 @@ class CandidateSerializer(serializers.ModelSerializer):
             'fairness_scan_json', 'has_embedding',
             'ai_profile_json',
             'uploaded_by_username', 'created_at', 'updated_at', 'is_active',
-            'job_match_score', 'job_match_rank',
+            'job_match_score', 'job_match_rank', 'target_job',
         ]
         read_only_fields = [
             'id', 'extracted_text', 'embedding_vector',

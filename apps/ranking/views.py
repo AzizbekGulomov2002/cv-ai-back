@@ -86,18 +86,21 @@ def run_ranking(request):
         job_id = serializer.validated_data['job_id']
         candidate_ids = serializer.validated_data.get('candidate_ids')
         notes = serializer.validated_data.get('notes', '')
-        
+        only_target = serializer.validated_data.get('only_target_job_candidates', False)
+
         try:
             job = get_object_or_404(Job, id=job_id, is_active=True)
-            
+
             # Get candidates to rank
             if candidate_ids:
                 candidates = Candidate.objects.filter(
-                    id__in=candidate_ids, 
+                    id__in=candidate_ids,
                     is_active=True
                 )
             else:
                 candidates = Candidate.objects.filter(is_active=True)
+                if only_target:
+                    candidates = candidates.filter(target_job_id=job_id)
             
             if not candidates.exists():
                 return Response({
@@ -167,32 +170,69 @@ def run_ranking(request):
 def get_job_rankings(request, job_id):
     """
     Get rankings for a specific job.
+
+    Query: ``session_id`` — aniq sessiya (yo‘q bo‘lsa oxirgi).
+    ``min_score`` — minimal ``ai_score``.
+    ``human_decision`` — masalan ``pending``, ``accepted``.
+    ``ordering`` — ``rank`` (sukut, ai_rank o‘sish) yoki ``-score``.
     """
     try:
         job = get_object_or_404(Job, id=job_id)
-        
-        # Get the latest ranking session for this job
-        latest_session = RankingSession.objects.filter(
-            job=job
-        ).order_by('-created_at').first()
-        
+
+        session_id = request.query_params.get("session_id")
+        if session_id:
+            try:
+                sid = int(session_id)
+            except ValueError:
+                return Response(
+                    {"error": "Invalid session_id"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            latest_session = RankingSession.objects.filter(
+                id=sid, job=job
+            ).first()
+        else:
+            latest_session = RankingSession.objects.filter(
+                job=job
+            ).order_by("-created_at").first()
+
         if not latest_session:
             return Response({
                 'message': 'No rankings found for this job',
                 'job_title': job.title
             }, status=status.HTTP_404_NOT_FOUND)
-        
-        # Get all rankings for the latest session
-        rankings = CandidateRanking.objects.filter(
-            session=latest_session
-        ).order_by('ai_rank')
-        
+
+        rankings = CandidateRanking.objects.filter(session=latest_session)
+
+        min_score = request.query_params.get("min_score")
+        if min_score is not None and min_score != "":
+            try:
+                rankings = rankings.filter(ai_score__gte=float(min_score))
+            except ValueError:
+                pass
+
+        hum = request.query_params.get("human_decision")
+        if hum:
+            rankings = rankings.filter(human_decision=hum)
+
+        ordering = (request.query_params.get("ordering") or "rank").lower()
+        if ordering in ("-score", "score_desc"):
+            rankings = rankings.order_by("-ai_score", "ai_rank")
+        else:
+            rankings = rankings.order_by("ai_rank")
+
         return Response({
             'job': {
                 'id': job.id,
                 'title': job.title
             },
             'session': RankingSessionSerializer(latest_session).data,
+            'filters_applied': {
+                'session_id': latest_session.id,
+                'min_score': min_score,
+                'human_decision': hum or None,
+                'ordering': ordering,
+            },
             'rankings': CandidateRankingSerializer(rankings, many=True).data
         }, status=status.HTTP_200_OK)
         
@@ -309,13 +349,25 @@ class RankingSessionListView(generics.ListAPIView):
     serializer_class = RankingSessionSerializer
     
     def get_queryset(self):
-        queryset = RankingSession.objects.all().order_by('-created_at')
-        
-        # Filter by job if provided
+        queryset = RankingSession.objects.all()
+
         job_id = self.request.query_params.get('job_id')
         if job_id:
             queryset = queryset.filter(job_id=job_id)
-        
+
+        min_c = self.request.query_params.get("min_candidates")
+        if min_c:
+            try:
+                queryset = queryset.filter(candidates_count__gte=int(min_c))
+            except ValueError:
+                pass
+
+        ordering = self.request.query_params.get("ordering", "-created_at")
+        if ordering in ("created_at", "-created_at"):
+            queryset = queryset.order_by(ordering)
+        else:
+            queryset = queryset.order_by("-created_at")
+
         return queryset
 
 

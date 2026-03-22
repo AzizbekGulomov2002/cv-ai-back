@@ -1,16 +1,51 @@
 """
 Views for job management.
 """
-from rest_framework import generics
 import logging
+
+from rest_framework import generics, status
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
 
 from apps.audit.models import AuditLog
 from services.api_actor import get_api_actor
 from services.embedding_service import EmbeddingService
 from .models import Job
-from .serializers import JobCreateSerializer, JobSerializer, JobUpdateSerializer
+from .serializers import JobCreateSerializer, JobMiniSerializer, JobSerializer, JobUpdateSerializer
 
 logger = logging.getLogger(__name__)
+
+
+@api_view(["GET"])
+def job_choices_for_cv_upload(request):
+    """
+    CV yuklash formasi uchun: barcha aktiv vakansiyalar + UI matnlari (dinamik ro‘yxat).
+    """
+    jobs = Job.objects.filter(is_active=True).order_by("company", "title")
+    ser = JobMiniSerializer(jobs, many=True)
+    return Response(
+        {
+            "jobs": ser.data,
+            "ui_prompt": {
+                "uz": (
+                    "Avval ariza berayotgan lavozimni tanlang. Bir nechta ochiq vakansiya bo‘lsa, "
+                    "har biri uchun alohida CV yuklang yoki bir xil faylni turli job_id bilan yuboring. "
+                    "Tanlangan vakansiya nomzod bilan bog‘lanadi va moslik (score) shu lavozim talablariga qarab hisoblanadi."
+                ),
+                "en": (
+                    "Select the position this application is for. If you have several open roles, "
+                    "upload once per job (same file is OK with different job_id). "
+                    "The chosen job is stored on the candidate and the match score uses that job’s requirements."
+                ),
+            },
+            "api": {
+                "upload_multipart_fields": ["file|cv|cv_file", "job_id (optional but recommended)"],
+                "upload_query": "?job_id=<id>",
+                "example": "POST /api/candidates/upload/  Body: FormData file + job_id",
+            },
+        },
+        status=status.HTTP_200_OK,
+    )
 
 
 class JobCreateView(generics.CreateAPIView):
