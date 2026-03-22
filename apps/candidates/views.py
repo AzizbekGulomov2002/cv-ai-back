@@ -27,9 +27,18 @@ def upload_cv(request):
     Upload and process a candidate's CV.
 
     Use ``multipart/form-data``. Pass the file as ``cv_file``, ``file``, or ``cv``.
-    Always pass ``files=request.FILES`` so the file is bound (fixes empty FILES on some hosts).
+
+    DRF ``Serializer`` does not accept ``files=`` (it raises TypeError). Some clients
+    send only the file so ``request.POST`` is empty while ``request.FILES`` has the
+    upload — merge them so the serializer sees the file.
     """
-    serializer = CandidateUploadSerializer(data=request.data, files=request.FILES or None)
+    if request.FILES:
+        data = request.POST.copy()
+        for key in request.FILES:
+            data[key] = request.FILES[key]
+    else:
+        data = request.data
+    serializer = CandidateUploadSerializer(data=data)
     
     if serializer.is_valid():
         try:
