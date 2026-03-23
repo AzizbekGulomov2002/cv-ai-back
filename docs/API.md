@@ -5,6 +5,8 @@
 
 Sukut: `API_REQUIRE_AUTH=false` — ko‘p endpointlar token talab qilmaydi. Production da `API_REQUIRE_AUTH=true`.
 
+**English documentation:** project overview and scoring → [`../README.md`](../README.md); setup & operations → [`docs.md`](docs.md).
+
 ---
 
 ## 1. Auth (`/api/auth/`)
