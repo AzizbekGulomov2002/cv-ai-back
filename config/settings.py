@@ -208,18 +208,33 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10MB
 DATA_UPLOAD_MAX_MEMORY_SIZE = FILE_UPLOAD_MAX_MEMORY_SIZE
 
 # Email (SMTP) Configuration
-# Set EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend in production
-EMAIL_BACKEND = os.getenv(
-    'EMAIL_BACKEND',
-    'django.core.mail.backends.console.EmailBackend'  # prints to console in dev
-)
+# .env: EMAIL_HOST, EMAIL_PORT, EMAIL_USE_TLS, EMAIL_USE_SSL, EMAIL_HOST_USER,
+#       EMAIL_HOST_PASSWORD, optional DEFAULT_FROM_EMAIL, optional EMAIL_BACKEND.
+# Agar EMAIL_BACKEND berilmasa va user+parol to‘ldirilgan bo‘lsa — real yuborish uchun SMTP ishlatiladi.
 EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
 EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'true').lower() in ('1', 'true', 'yes')
 EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', 'false').lower() in ('1', 'true', 'yes')
-EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
-EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
-DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'noreply@cv-ai.local')
+EMAIL_HOST_USER = (os.getenv('EMAIL_HOST_USER') or '').strip()
+_raw_email_password = os.getenv('EMAIL_HOST_PASSWORD') or ''
+# Gmail app password ko‘pincha 4x4 bo‘shliq bilan nusxalanadi; SMTP uchun bo‘shliqsiz 16 belgi kerak.
+EMAIL_HOST_PASSWORD = ''.join(_raw_email_password.split())
+
+_default_from = (os.getenv('DEFAULT_FROM_EMAIL') or '').strip()
+if _default_from:
+    DEFAULT_FROM_EMAIL = _default_from
+elif EMAIL_HOST_USER:
+    DEFAULT_FROM_EMAIL = f'AI CV System <{EMAIL_HOST_USER}>'
+else:
+    DEFAULT_FROM_EMAIL = 'noreply@cv-ai.local'
+
+_email_backend = (os.getenv('EMAIL_BACKEND') or '').strip()
+if _email_backend:
+    EMAIL_BACKEND = _email_backend
+elif EMAIL_HOST_USER and EMAIL_HOST_PASSWORD:
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+else:
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 # Optional: absolute URL of the frontend (included in emails)
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
