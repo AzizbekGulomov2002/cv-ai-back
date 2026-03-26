@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'apps.ranking',
     'apps.ai',
     'apps.audit',
+    'apps.stats',
 ]
 
 MIDDLEWARE = [
@@ -154,6 +155,12 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
+    ],
+    # Explicit parsers: JSON + multipart (form-data for file/image uploads)
+    'DEFAULT_PARSER_CLASSES': [
+        'rest_framework.parsers.JSONParser',
+        'rest_framework.parsers.MultiPartParser',
+        'rest_framework.parsers.FormParser',
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,

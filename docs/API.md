@@ -1,196 +1,393 @@
-# AI CV System — Full API Documentation
+# AI CV System — Full API Reference
 
-Base URL: `http://localhost:8000`  
-All endpoints: `Content-Type: application/json` unless file upload (multipart).  
-Auth header: `Authorization: Token <token>`
+**Base URL:** `http://localhost:8000`  
+**Auth header:** `Authorization: Token <token>`  
+**Default Content-Type:** `application/json`  
+**File uploads:** `multipart/form-data`
 
 ---
 
-## 1. Authentication (`/api/auth/`)
+## Table of Contents
+
+1. [Authentication](#1-authentication)
+2. [Jobs](#2-jobs)
+3. [Candidates / CV Upload](#3-candidates--cv-upload)
+4. [Ranking & AI Scoring](#4-ranking--ai-scoring)
+5. [Statistics Dashboard](#5-statistics-dashboard)
+6. [Environment Configuration](#6-environment-configuration)
+7. [Frontend Integration Guide](#7-frontend-integration-guide)
+
+---
+
+## 1. Authentication
+
+**Base path:** `/api/auth/`
 
 ### Roles
-| Role | Access |
+
+| Role | Description |
 |---|---|
-| `recruiter` | Full system access — ranking, accept/reject, all candidates |
-| `candidate` | Upload own CV, view own profile, view own ranking history |
+| `recruiter` | Full access — manage jobs, view all candidates, run ranking, send emails |
+| `candidate` | Upload own CV, browse jobs, view own profile and ranking results |
 
 ---
 
 ### `POST /api/auth/register/`
-Register a new user. Open (no auth required).
 
-**Request body:**
-```json
-{
-  "username": "john_doe",
-  "email": "john@example.com",
-  "password": "SecurePass123",
-  "password_confirm": "SecurePass123",
-  "role": "recruiter",          // "recruiter" | "candidate"
-  "first_name": "John",
-  "last_name": "Doe",
-  "company": "Acme Corp",       // recruiters
-  "phone": "+1234567890",
-  "github": "https://github.com/jdoe",  // candidates
-  "image": <file>               // optional profile photo
-}
-```
+Register a new user. **Open — no auth required.**  
+Supports `multipart/form-data` for profile image upload.
+
+**Request (JSON or multipart form-data):**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `username` | string | ✓ | Unique username |
+| `email` | string | ✓ | Valid email address |
+| `password` | string | ✓ | Min 8 characters |
+| `password_confirm` | string | ✓ | Must match `password` |
+| `role` | string | ✓ | `recruiter` or `candidate` |
+| `first_name` | string | | Candidate: recommended |
+| `last_name` | string | | Candidate: recommended |
+| `github` | string (URL) | | Candidate: GitHub profile URL |
+| `image` | file | | Profile photo (PNG/JPG) |
+| `company` | string | | Recruiter: company name |
+| `phone` | string | | Phone number |
 
 **Response 201:**
 ```json
 {
   "message": "User registered successfully",
-  "user": { "id": 1, "username": "john_doe", "email": "john@example.com", "role": "recruiter" },
-  "token": "abc123token..."
+  "token": "9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b",
+  "user": {
+    "id": 5,
+    "username": "ali_nazarov",
+    "email": "ali@example.com",
+    "first_name": "Ali",
+    "last_name": "Nazarov",
+    "role": "candidate",
+    "company": "",
+    "phone": "",
+    "image": "user_images/5/profile.png",
+    "image_url": "http://localhost:8000/media/user_images/5/profile.png",
+    "github": "https://github.com/ali",
+    "date_joined": "2026-03-26T12:00:00Z",
+    "last_login": "2026-03-26T12:00:00Z",
+    "candidate_profile": null
+  }
 }
 ```
+
+**Error 400:** `{ "error": "Invalid registration data", "details": { "username": ["..."] } }`
 
 ---
 
 ### `POST /api/auth/login/`
-Login with username and password. Open.
+
+Login with username + password. **Open — no auth required.**
 
 **Request:**
 ```json
-{ "username": "john_doe", "password": "SecurePass123" }
+{ "username": "ali_nazarov", "password": "SecurePass123" }
 ```
 
 **Response 200:**
 ```json
 {
   "message": "Login successful",
+  "token": "9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b",
   "user": {
-    "id": 1,
-    "username": "john_doe",
-    "email": "john@example.com",
-    "role": "recruiter",
-    "company": "Acme Corp"
-  },
-  "token": "abc123token..."
+    "id": 5,
+    "username": "ali_nazarov",
+    "email": "ali@example.com",
+    "first_name": "Ali",
+    "last_name": "Nazarov",
+    "role": "candidate",
+    "company": "",
+    "phone": "",
+    "image": "user_images/5/profile.png",
+    "image_url": "http://localhost:8000/media/user_images/5/profile.png",
+    "github": "https://github.com/ali",
+    "date_joined": "2026-03-26T11:00:00Z",
+    "last_login": "2026-03-26T12:05:00Z",
+    "candidate_profile": {
+      "id": 3,
+      "name": "Ali Nazarov",
+      "email": "ali@example.com",
+      "phone": "",
+      "github": "https://github.com/ali",
+      "skills": ["Python", "Django"],
+      "experience_years": 3,
+      "education": "BSc Computer Science",
+      "professional_summary": "...",
+      "cv_file_url": "http://localhost:8000/media/cvs/3/cv.pdf",
+      "is_active": true,
+      "target_job_id": 2,
+      "created_at": "2026-03-25T09:00:00Z",
+      "updated_at": "2026-03-26T10:00:00Z"
+    }
+  }
 }
 ```
+
+> `candidate_profile` is `null` until the user uploads a CV.  
+> `image_url` is an absolute URL ready to use as `<img src="...">`.
+
+**Error 400:** `{ "error": "Invalid login credentials", "details": {...} }`
 
 ---
 
 ### `POST /api/auth/logout/`
-Logout (invalidates token). Auth required.
+
+Invalidate the current auth token. **Auth required.**
+
+**Response 200:** `{ "message": "Logout successful" }`
+
+---
+
+### `GET /api/auth/me/`
+
+Get the full profile of the currently logged-in user. **Auth required.**  
+Use this on page load to restore session state.
+
+**Response 200:** Same structure as `user` object in the login response above.
 
 ---
 
 ### `GET /api/auth/profile/`
-Get current user profile. Auth required.
 
-**Response:**
+Same as `/me/` — full user profile. **Auth required.**
+
+---
+
+### `PATCH /api/auth/profile/update/`
+
+Update own profile fields. **Auth required.**  
+Supports `multipart/form-data` for image. All fields optional (partial update).
+
+**Request (PATCH, JSON or multipart):**
 ```json
 {
-  "id": 1,
-  "username": "jane_smith",
-  "email": "jane@example.com",
-  "first_name": "Jane",
-  "last_name": "Smith",
-  "role": "candidate",
-  "company": "",
-  "phone": "",
-  "image": "/media/user_images/1/profile.jpg",
-  "github": "https://github.com/janesmith",
-  "date_joined": "2026-03-26T10:00:00Z",
-  "last_login": "2026-03-26T12:00:00Z"
+  "first_name": "Ali",
+  "last_name": "Nazarov",
+  "email": "ali@example.com",
+  "github": "https://github.com/ali",
+  "company": "TechCorp",
+  "phone": "+998901234567",
+  "image": "<file>"
+}
+```
+
+**Response 200:** Full user profile object (same as `/me/`).
+
+---
+
+### `PATCH /api/auth/profile/image/`
+
+Upload or replace the profile photo only. **Auth required.**  
+Must use `multipart/form-data`.
+
+**Form field:** `image` (PNG/JPG/GIF file)
+
+**Response 200:**
+```json
+{
+  "message": "Profile image updated.",
+  "user": { "...full user profile..." }
+}
+```
+
+**Error 400:** `{ "error": "No image file provided. Use form field 'image'." }`
+
+---
+
+## 2. Jobs
+
+**Base path:** `/api/jobs/`
+
+---
+
+### `GET /api/jobs/`
+
+List all active jobs. **Auth required.**
+
+- Recruiter: sees `applicants_count` per job.
+- Candidate: sees `has_applied`, `my_score`, `my_status` for their own application.
+
+**Response 200:**
+```json
+[
+  {
+    "id": 1,
+    "title": "Backend Developer",
+    "description": "We are looking for...",
+    "requirements": "Python, Django, REST APIs",
+    "required_skills": ["Python", "Django", "PostgreSQL"],
+    "min_experience_years": 2,
+    "is_active": true,
+    "created_at": "2026-03-01T00:00:00Z",
+    "applicants_count": 12,
+    "has_applied": true,
+    "my_score": 78.5,
+    "my_status": "ranked"
+  }
+]
+```
+
+---
+
+### `GET /api/jobs/<id>/`
+
+Get job detail. **Auth required.**
+
+---
+
+### `GET /api/jobs/for-upload/`
+
+List jobs for CV upload dropdown (id + title only). **Auth required.**
+
+**Response 200:**
+```json
+[{ "id": 1, "title": "Backend Developer" }]
+```
+
+---
+
+### `GET /api/jobs/<id>/apply-info/`
+
+Get job details with the candidate's own application status. **Auth required (candidate).**
+
+**Response 200:**
+```json
+{
+  "job": {
+    "id": 1,
+    "title": "Backend Developer",
+    "description": "...",
+    "requirements": "...",
+    "required_skills": ["Python", "Django"],
+    "min_experience_years": 2
+  },
+  "my_application": {
+    "has_applied": true,
+    "candidate_id": 3,
+    "status": "ranked",
+    "score": 78.5,
+    "rank": 2,
+    "email_sent": false,
+    "scoring_summary": {
+      "composite_score": 78.5,
+      "strong": [
+        { "dimension": "skills", "score": 85.0, "reason": "Strong Python/Django alignment" }
+      ],
+      "average": [
+        { "dimension": "experience", "score": 62.0, "reason": "2 years, meets minimum" }
+      ],
+      "weak": [
+        { "dimension": "education", "score": 45.0, "reason": "No formal CS degree on file" }
+      ]
+    }
+  }
 }
 ```
 
 ---
 
-### `PUT/PATCH /api/auth/profile/update/`
-Update current user profile. Auth required.
+### `GET /api/jobs/my-applications/`
 
-**Fields:** `email`, `first_name`, `last_name`, `company`, `phone`, `image`, `github`
+List all jobs the current candidate has applied to. **Auth required (candidate).**
+
+**Response 200:**
+```json
+[
+  {
+    "job_id": 1,
+    "job_title": "Backend Developer",
+    "applied_at": "2026-03-20T14:00:00Z",
+    "status": "ranked",
+    "score": 78.5,
+    "rank": 2,
+    "email_sent": false,
+    "email_type": null
+  }
+]
+```
 
 ---
 
-## 2. Candidates (`/api/candidates/`)
+### `POST /api/jobs/create/`
 
-### Access Control
-| Action | Recruiter | Candidate |
-|---|---|---|
-| Upload CV | ✅ (for any) | ✅ (own profile only, 1 per account) |
-| List candidates | ✅ All | ✅ Own only |
-| View detail | ✅ Any | ✅ Own only |
-| Update | ✅ Any | ✅ Own only |
-| Delete/deactivate | ✅ | ❌ |
+Create a new job posting. **Recruiter only.**
+
+**Request:**
+```json
+{
+  "title": "Backend Developer",
+  "description": "We are looking for a senior backend engineer...",
+  "requirements": "Python, Django, REST APIs, PostgreSQL",
+  "required_skills": ["Python", "Django", "PostgreSQL"],
+  "min_experience_years": 2,
+  "is_active": true
+}
+```
+
+**Response 201:** Created job object.
+
+---
+
+### `PATCH /api/jobs/<id>/update/`
+
+Update a job posting. **Recruiter only.**
+
+---
+
+### `DELETE /api/jobs/<id>/delete/`
+
+Delete a job posting. **Recruiter only.**  
+**Response 204:** No content.
+
+---
+
+## 3. Candidates / CV Upload
+
+**Base path:** `/api/candidates/`
 
 ---
 
 ### `POST /api/candidates/upload/`
-Upload a CV file. **Auth required.**
 
-- **Candidate role**: `first_name`, `last_name`, `email`, `github` auto-filled from user account.  
-  Only 1 active profile allowed per candidate account.
-- **Recruiter role**: uploads on behalf of candidate; fills info manually.
+Upload a CV linked to a job. **Auth required.**  
+Must use `multipart/form-data`.
 
-**Multipart form fields:**
-| Field | Required | Description |
-|---|---|---|
-| `cv_file` | ✅ | PDF or DOCX, max 10MB |
-| `job_id` | Optional | Link to a job for instant scoring |
-| `name` | Optional | Overrides user account name |
-| `email` | Optional | Overrides user account email |
-| `phone` | Optional | Phone number |
-| `github` | Optional | GitHub profile URL |
+**Candidate users:** `name`, `email`, `github` are auto-filled from their user account.  
+**Candidate users:** cannot upload if they already have an active CV (`is_active=true`) for the same job.
 
-**Response 201 — with job_id (full scoring):**
+**Form fields:**
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `cv_file` | file | ✓ | PDF or DOCX |
+| `job_id` | integer | | Link to job posting |
+| `name` | string | | Auto-filled for candidates |
+| `email` | string | | Auto-filled for candidates |
+| `phone` | string | | |
+| `github` | string | | Auto-filled for candidates |
+| `skills` | JSON string | | e.g. `["Python","Django"]` |
+| `experience_years` | integer | | |
+| `education` | string | | |
+| `professional_summary` | string | | |
+
+**Response 201:**
 ```json
 {
-  "message": "CV processed successfully (file pipeline)",
-  "candidate": { "id": 5, "name": "Jane Smith", "email": "jane@example.com", "github": "https://github.com/janesmith", ... },
-  "score": 74.5,
-  "ranking": {
-    "score": 74.5,
-    "rank_label": "Average Match",
-    "tier": "average"
-  },
-  "matching": {
-    "matched_skills": ["Python", "Django"],
-    "missing_skills": ["React", "Docker"]
-  },
-  "explanation": "Overall match index: 74.5/100...",
+  "message": "CV uploaded successfully",
+  "candidate_id": 7,
+  "name": "Ali Nazarov",
+  "job_id": 1,
   "scoring_summary": {
-    "composite_score": 74.5,
-    "overall_tier": "average",
-    "overall_label": "Average Match",
-    "strong": [
-      {
-        "id": "experience_fit",
-        "label": "Experience vs job minimum",
-        "score": 100.0,
-        "weight_pct": 18.0,
-        "weighted_contribution": 18.0,
-        "reason": "Experience fit: candidate 5 y ≥ required 3 y."
-      }
-    ],
-    "average": [
-      {
-        "id": "required_skills",
-        "label": "Required skills coverage",
-        "score": 66.7,
-        "weight_pct": 28.0,
-        "weighted_contribution": 18.68,
-        "reason": "Required skills: 2/3 explicit matches (Python, Django). Missing required: React …",
-        "matched": ["Python", "Django"],
-        "missing": ["React"]
-      }
-    ],
-    "weak": [
-      {
-        "id": "preferred_skills",
-        "label": "Preferred skills",
-        "score": 0.0,
-        "weight_pct": 12.0,
-        "weighted_contribution": 0.0,
-        "reason": "Preferred skills: 0/2 matched (none)."
-      }
-    ],
-    "counts": { "strong": 1, "average": 3, "weak": 1 },
-    "summary_text": "Overall composite score: 74.5/100. Strong areas (1): Experience vs job minimum. ..."
+    "composite_score": 78.5,
+    "strong": [...],
+    "average": [...],
+    "weak": [...]
   }
 }
 ```
@@ -198,125 +395,107 @@ Upload a CV file. **Auth required.**
 ---
 
 ### `GET /api/candidates/`
-List candidates. Auth required.
 
-- Recruiter: all active candidates
-- Candidate: only own profile
+List candidates. **Auth required.**
 
-**Query params:**
-- `search` — name or email search
-- `min_experience` — minimum years
-- `target_job_id` — filter by job application
-- `job_id` — sort by AI score from latest ranking session
-- `page`, `page_size` — pagination (default 10)
+- Recruiter: sees all candidates.
+- Candidate: sees only their own profile.
+
+**Response 200:**
+```json
+[
+  {
+    "id": 7,
+    "name": "Ali Nazarov",
+    "email": "ali@example.com",
+    "phone": "",
+    "github": "https://github.com/ali",
+    "skills": ["Python", "Django"],
+    "experience_years": 3,
+    "education": "BSc CS",
+    "professional_summary": "...",
+    "cv_file": "cvs/7/cv.pdf",
+    "is_active": true,
+    "target_job_id": 1,
+    "candidate_user_id": 5,
+    "created_at": "2026-03-25T09:00:00Z",
+    "updated_at": "2026-03-26T10:00:00Z"
+  }
+]
+```
 
 ---
 
 ### `GET /api/candidates/<id>/`
-Candidate detail with full ranking history and scoring_summary. Auth required.
 
-**Query params:**
-- `job_id` — live match dimensions for a specific job
-- `no_live_dimensions=1` — skip live recomputation
+Get candidate detail. **Auth required.**
 
-**Response includes:**
-- `ranking_history[]` — all past ranking sessions with `scoring_summary` per entry
-- `match_dimensions_live` — live computed dimensions
-- `scoring_summary` — from latest target_job ranking
+- Recruiter: any candidate.
+- Candidate: own profile only.
+
+Includes `scoring_summary` if a ranking exists for the candidate.
 
 ---
 
 ### `PATCH /api/candidates/<id>/update/`
-Update candidate. Auth required. Candidate can only update own.
+
+Update candidate profile. **Auth required.**
+
+- Recruiter: can update any candidate.
+- Candidate: own profile only.
+
+**Request:** Any subset of candidate fields (multipart for new CV file).
 
 ---
 
 ### `DELETE /api/candidates/<id>/delete/`
-Deactivate candidate. Recruiter only.
+
+Delete candidate. **Recruiter only.**  
+**Response 204:** No content.
 
 ---
 
-## 3. Jobs (`/api/jobs/`)
+## 4. Ranking & AI Scoring
 
-### `GET /api/jobs/`
-List all active jobs. Auth required.
+**Base path:** `/api/ranking/`
 
-### `GET /api/jobs/for-upload/`
-Job list for CV upload dropdown (id + title only).
-
-### `POST /api/jobs/create/`
-Create a job. Recruiter only.
-
-**Body:**
-```json
-{
-  "title": "Senior Backend Developer",
-  "company": "Acme Corp",
-  "description": "...",
-  "requirements": "...",
-  "required_skills": ["Python", "Django", "PostgreSQL"],
-  "preferred_skills": ["Docker", "AWS", "Redis"],
-  "min_experience": 3,
-  "salary_range": "80000-120000"
-}
-```
-
-### `GET /api/jobs/<id>/`
-Job detail.
-
-### `PUT/PATCH /api/jobs/<id>/update/`
-Update job. Recruiter only.
-
-### `DELETE /api/jobs/<id>/delete/`
-Delete job. Recruiter only.
-
----
-
-## 4. Ranking (`/api/ranking/`)
-
-> All ranking endpoints require **Recruiter** role (except `preview` which requires auth).
+All ranking endpoints are **Auth required**. Mutation endpoints are **Recruiter only**.
 
 ---
 
 ### `POST /api/ranking/run/`
-Run AI ranking for a job. Recruiter only.
 
-**Body:**
+Run AI ranking for all active candidates for a job. **Recruiter only.**
+
+**Request:**
 ```json
-{
-  "job_id": 1,
-  "candidate_ids": [1, 2, 3],   // optional; defaults to all active candidates
-  "only_target_job_candidates": true,  // only candidates who applied for this job
-  "notes": "Q1 2026 hiring batch"
-}
+{ "job_id": 1, "force_rerun": false }
 ```
 
-**Response:**
+**Response 200:**
 ```json
 {
-  "message": "Ranking completed successfully",
-  "session": { "id": 5, "job": 1, "job_title": "Senior Backend Dev", ... },
-  "rankings_count": 12,
+  "session_id": 12,
+  "job_id": 1,
+  "candidates_ranked": 8,
   "top_candidates": [
     {
-      "id": 8,
-      "candidate": { "id": 3, "name": "Alice Johnson", ... },
-      "ai_score": 87.4,
-      "ai_rank": 1,
-      "matched_skills": ["Python", "Django", "PostgreSQL"],
-      "missing_skills": ["Redis"],
-      "explanation": "Overall match index: 87.4/100...",
+      "rank": 1,
+      "candidate_id": 7,
+      "name": "Ali Nazarov",
+      "score": 91.2,
+      "status": "ranked",
       "scoring_summary": {
-        "composite_score": 87.4,
-        "overall_tier": "strong",
-        "overall_label": "Strong Match",
-        "strong": [...],
-        "average": [...],
-        "weak": [...],
-        "summary_text": "..."
-      },
-      "human_decision": "pending",
-      "email_sent": false
+        "composite_score": 91.2,
+        "strong": [
+          { "dimension": "skills", "score": 95.0, "reason": "Excellent skills match" },
+          { "dimension": "experience", "score": 88.0, "reason": "5 years, exceeds requirement" }
+        ],
+        "average": [
+          { "dimension": "cultural_fit", "score": 70.0, "reason": "Good alignment with company values" }
+        ],
+        "weak": []
+      }
     }
   ]
 }
@@ -324,274 +503,492 @@ Run AI ranking for a job. Recruiter only.
 
 ---
 
-### `GET /api/ranking/<job_id>/`
-Get rankings for a job. Recruiter only.
+### `POST /api/ranking/preview/`
 
-**Query params:**
-- `session_id` — specific session (defaults to latest)
-- `min_score` — filter by minimum ai_score
-- `human_decision` — filter: `pending | accepted | rejected | shortlisted`
-- `ordering` — `rank` (default) or `-score`
+Preview match score between one candidate and one job without saving. **Auth required.**
 
-**Response includes full `scoring_summary` per ranking with strong/average/weak breakdown.**
+**Request:**
+```json
+{ "candidate_id": 7, "job_id": 1 }
+```
 
----
-
-### `GET /api/ranking/details/<pk>/`
-Detailed single ranking with full `scoring_summary`. Recruiter only.
-
-**scoring_summary structure:**
+**Response 200:**
 ```json
 {
-  "composite_score": 87.4,
-  "overall_tier": "strong",        // "strong" | "average" | "weak"
-  "overall_label": "Strong Match",
-  "strong": [                      // score >= 75
-    {
-      "id": "semantic_alignment",
-      "label": "Semantic alignment (job ↔ CV text)",
-      "score": 82.0,
-      "weight_pct": 32,
-      "weighted_contribution": 26.24,
-      "reason": "Semantic similarity between job text and CV embedding text is 82.0/100 ..."
-    }
-  ],
-  "average": [ ... ],              // 50 <= score < 75
-  "weak": [ ... ],                 // score < 50
-  "counts": { "strong": 3, "average": 1, "weak": 1 },
-  "summary_text": "Overall composite score: 87.4/100. Strong areas (3): ..."
+  "composite_score": 78.5,
+  "dimensions": {
+    "skills": 85.0,
+    "experience": 72.0,
+    "education": 60.0,
+    "summary": 80.0
+  },
+  "scoring_summary": { "strong": [...], "average": [...], "weak": [...] },
+  "match_breakdown": { "matched_skills": [...], "missing_skills": [...] }
 }
 ```
 
 ---
 
-### `POST /api/ranking/<ranking_id>/override/`
-Human override of AI ranking. Recruiter only.
+### `GET /api/ranking/<job_id>/`
 
-**Body:**
+Get all rankings for a job, ordered by rank. **Auth required.**
+
+**Response 200:**
+```json
+[
+  {
+    "id": 45,
+    "candidate_id": 7,
+    "candidate_name": "Ali Nazarov",
+    "job_id": 1,
+    "rank": 1,
+    "score": 91.2,
+    "override_score": null,
+    "final_score": 91.2,
+    "status": "ranked",
+    "email_sent": false,
+    "email_sent_at": null,
+    "email_type": null,
+    "rejection_reasons": null,
+    "scoring_summary": { "composite_score": 91.2, "strong": [...], "average": [...], "weak": [...] },
+    "created_at": "2026-03-26T12:00:00Z"
+  }
+]
+```
+
+---
+
+### `POST /api/ranking/<ranking_id>/override/`
+
+Manually override the AI score. **Recruiter only.**
+
+**Request:**
+```json
+{ "override_score": 85.0, "notes": "Strong cultural fit, slightly overriding AI score" }
+```
+
+**Response 200:**
 ```json
 {
-  "human_decision": "accepted",     // pending | accepted | rejected | shortlisted
-  "human_score": 92.0,              // optional override score (0-100)
-  "human_feedback": "Excellent cultural fit despite missing Redis experience."
+  "ranking_id": 45,
+  "original_score": 91.2,
+  "override_score": 85.0,
+  "final_score": 85.0,
+  "notes": "Strong cultural fit..."
 }
 ```
 
 ---
 
 ### `POST /api/ranking/<ranking_id>/accept/`
-Accept a candidate and send personalised acceptance email via SMTP. **Recruiter only.**
 
-Auto-generates email from:
-- Candidate's matched skills
-- Strong scoring dimensions with exact scores and reasons
+Send acceptance email to candidate and mark as accepted. **Recruiter only.**
 
-**Body (optional):**
+**Request:**
 ```json
 {
-  "extra_message": "Please expect a call from our HR team on Monday."
+  "custom_message": "We are delighted to invite you...",
+  "position_details": "Senior Backend Developer, starting April 1st"
 }
 ```
 
 **Response 200:**
 ```json
 {
-  "message": "Acceptance email sent to jane@example.com.",
-  "candidate": "Jane Smith",
-  "job": "Senior Backend Developer",
-  "email_sent_to": "jane@example.com",
-  "ranking": { ..., "email_sent": true, "email_type": "accept", "human_decision": "accepted" }
+  "message": "Acceptance email sent to ali@example.com",
+  "ranking_id": 45,
+  "status": "accepted",
+  "email_sent": true,
+  "email_sent_at": "2026-03-26T14:30:00Z"
 }
 ```
 
-**Error 502** if SMTP is not configured or sending fails.
+> The email includes: candidate's name, matched strong skills, `scoring_summary.strong` items,
+> job title, optional custom message, optional position details.
 
 ---
 
 ### `POST /api/ranking/<ranking_id>/reject/`
-Reject a candidate with specific reasons — sends detailed rejection email. **Recruiter only.**
 
-If `rejection_reasons` not provided, auto-generated from weak/average scoring dimensions.
+Send rejection email to candidate and mark as rejected. **Recruiter only.**
 
-**Body:**
+**Request:**
 ```json
 {
-  "rejection_reasons": [
-    {
-      "dimension": "Required skills coverage",
-      "score": 33.3,
-      "reason": "Required skills: 1/3 explicit matches (Python). Missing required: Django, React.",
-      "missing": ["Django", "React"]
-    },
-    {
-      "dimension": "Experience vs job minimum",
-      "score": 46.0,
-      "reason": "Experience gap: candidate 1 y vs minimum 3 y (2 year shortfall)."
-    }
+  "reasons": [
+    "Insufficient experience with PostgreSQL",
+    "Portfolio does not demonstrate required scale"
   ],
-  "extra_message": "We encourage you to gain more experience with Django and React."
+  "custom_message": "We wish you success in your future applications."
 }
 ```
+
+> If `reasons` is omitted, the system auto-generates reasons from `scoring_summary.weak`
+> and `scoring_summary.average` dimensions.
 
 **Response 200:**
 ```json
 {
-  "message": "Rejection email sent to candidate@example.com.",
-  "candidate": "Bob Jones",
-  "job": "Senior Backend Developer",
-  "email_sent_to": "candidate@example.com",
-  "rejection_reasons_sent": [...],
-  "ranking": { ..., "email_sent": true, "email_type": "reject", "human_decision": "rejected" }
+  "message": "Rejection email sent to ali@example.com",
+  "ranking_id": 45,
+  "status": "rejected",
+  "rejection_reasons": ["Insufficient experience with PostgreSQL", "..."],
+  "email_sent": true,
+  "email_sent_at": "2026-03-26T14:35:00Z"
 }
-```
-
----
-
-### `POST /api/ranking/preview/`
-Preview match score for a single job+candidate pair without saving a session. Auth required.
-
-**Body:**
-```json
-{ "job_id": 1, "candidate_id": 3 }
 ```
 
 ---
 
 ### `GET /api/ranking/analytics/`
-Ranking analytics. Recruiter only.
 
-**Query params:** `job_id`, `days` (default 30)
+Ranking analytics summary across all jobs. **Recruiter only.**
+
+**Query params:** `?job_id=1` (optional filter)
+
+**Response 200:**
+```json
+{
+  "total_ranked": 42,
+  "avg_score": 67.4,
+  "score_distribution": {
+    "0-50": 8,
+    "50-70": 14,
+    "70-85": 15,
+    "85-100": 5
+  },
+  "status_counts": { "ranked": 35, "accepted": 4, "rejected": 3 }
+}
+```
 
 ---
 
 ### `GET /api/ranking/sessions/`
-List ranking sessions. Recruiter only.
 
-**Query params:** `job_id`, `min_candidates`, `ordering`
+List all ranking sessions. **Recruiter only.**
 
 ---
 
-## 5. Audit (`/api/audit/`)
+### `GET /api/ranking/details/<pk>/`
 
-### `GET /api/audit/`
-List audit logs. Recruiter only.
+Get detail of a single `CandidateRanking` entry by PK. **Auth required.**
 
-### `GET /api/audit/statistics/`
-Audit statistics. Recruiter only.
+---
+
+## 5. Statistics Dashboard
+
+**Base path:** `/api/stats/`  
+All stats endpoints are **Recruiter only**.
+
+---
+
+### `GET /api/stats/`
+
+Full recruiter dashboard statistics.
+
+**Query param:** `?days=30` (default: 30)
+
+**Response 200:**
+```json
+{
+  "overview": {
+    "total_jobs": 5,
+    "active_jobs": 4,
+    "total_candidates": 42,
+    "active_candidates": 38,
+    "total_ranked": 35,
+    "accepted": 4,
+    "rejected": 3,
+    "emails_sent": 7
+  },
+  "pipeline": {
+    "uploaded": 42,
+    "ranked": 35,
+    "accepted": 4,
+    "rejected": 3,
+    "pending": 28
+  },
+  "per_job": [
+    {
+      "job_id": 1,
+      "job_title": "Backend Developer",
+      "candidates": 12,
+      "ranked": 10,
+      "avg_score": 71.3,
+      "top_score": 91.2,
+      "accepted": 1,
+      "rejected": 2
+    }
+  ],
+  "score_distribution": {
+    "0-50": 8,
+    "50-70": 14,
+    "70-85": 15,
+    "85-100": 5
+  },
+  "skills_gap": [
+    { "skill": "PostgreSQL", "required_in_jobs": 3, "found_in_candidates": 8 }
+  ],
+  "time_trends": {
+    "labels": ["2026-03-01", "2026-03-08", "2026-03-15", "2026-03-22"],
+    "uploads": [5, 8, 12, 6],
+    "rankings": [3, 7, 10, 5]
+  },
+  "top_candidates": [
+    {
+      "candidate_id": 7,
+      "name": "Ali Nazarov",
+      "best_score": 91.2,
+      "applied_jobs": 2,
+      "status": "ranked"
+    }
+  ],
+  "users_summary": {
+    "total_users": 20,
+    "recruiters": 3,
+    "candidates": 17,
+    "new_this_period": 6
+  },
+  "email_stats": {
+    "total_sent": 7,
+    "accept_emails": 4,
+    "reject_emails": 3,
+    "pending_decisions": 28
+  }
+}
+```
+
+---
+
+### `GET /api/stats/jobs/<job_id>/`
+
+Detailed statistics for a single job. **Recruiter only.**
+
+**Response 200:**
+```json
+{
+  "job": { "id": 1, "title": "Backend Developer", "is_active": true },
+  "ranking_sessions": [
+    {
+      "session_id": 12,
+      "created_at": "2026-03-26T12:00:00Z",
+      "candidates_count": 8
+    }
+  ],
+  "latest_rankings": [
+    {
+      "rank": 1,
+      "candidate_id": 7,
+      "name": "Ali Nazarov",
+      "score": 91.2,
+      "status": "ranked"
+    }
+  ],
+  "skills_gap": [
+    { "skill": "PostgreSQL", "required": true, "matched_count": 5, "total_candidates": 8 }
+  ]
+}
+```
 
 ---
 
 ## 6. Environment Configuration
 
-Copy `.env.example` to `.env` and configure:
+Copy `.env.example` to `.env` and fill in all values:
 
 ```env
 # Django
-SECRET_KEY=your_secret_key_here
-DEBUG=True
+SECRET_KEY=your-very-secret-key
+DEBUG=false
+ALLOWED_HOSTS=localhost,127.0.0.1
+
+# Database (default: SQLite)
+DATABASE_URL=sqlite:///db.sqlite3
+
+# AI provider — use ONE of the two
+OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=AIza...
+
+# API authentication (true = all endpoints require login)
 API_REQUIRE_AUTH=true
 
-# AI Keys
-OPENAI_API_KEY=sk-...
-GEMINI_API_KEY=...         # optional fallback
-
-# SMTP Email (for accept/reject notifications)
+# Email (SMTP)
 EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
 EMAIL_HOST=smtp.gmail.com
 EMAIL_PORT=587
 EMAIL_USE_TLS=true
-EMAIL_HOST_USER=your_email@gmail.com
-EMAIL_HOST_PASSWORD=your_app_password
+EMAIL_USE_SSL=false
+EMAIL_HOST_USER=your@gmail.com
+EMAIL_HOST_PASSWORD=your-app-password
+DEFAULT_FROM_EMAIL=AI CV System <your@gmail.com>
 
-# For Gmail: create App Password at Google Account → Security → App Passwords
-# (only available if 2-Step Verification is enabled)
-
-DEFAULT_FROM_EMAIL=AI CV System <your_email@gmail.com>
-FRONTEND_URL=http://localhost:3000
+# Frontend URL (used in email links)
+FRONTEND_URL=http://localhost:5173
 ```
 
-**For local development** (email prints to console instead of sending):
-```env
-EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
+### Gmail App Password Setup
+
+1. Enable 2-Factor Authentication on your Google account.
+2. Go to **Google Account → Security → App passwords**.
+3. Generate an App Password for "Mail / Other device".
+4. Use that as `EMAIL_HOST_PASSWORD`.
+
+---
+
+## 7. Frontend Integration Guide
+
+### Session Restore (page load)
+
+```js
+const token = localStorage.getItem('token');
+const res = await fetch('/api/auth/me/', {
+  headers: { 'Authorization': `Token ${token}` }
+});
+const user = await res.json();
+// user.role === 'candidate' || 'recruiter'
+// user.image_url — absolute URL for <img>
+// user.candidate_profile — linked CV data (or null)
 ```
 
 ---
 
-## 7. Scoring Logic
+### Candidate Registration with Photo
 
-### How scores are computed
+```js
+const form = new FormData();
+form.append('username', 'ali_nazarov');
+form.append('email', 'ali@example.com');
+form.append('password', 'SecurePass123');
+form.append('password_confirm', 'SecurePass123');
+form.append('role', 'candidate');
+form.append('first_name', 'Ali');
+form.append('last_name', 'Nazarov');
+form.append('github', 'https://github.com/ali');
+form.append('image', imageFileInput.files[0]);  // <input type="file">
 
-5 weighted dimensions, total weight = 1.0:
+const res = await fetch('/api/auth/register/', {
+  method: 'POST',
+  body: form   // no Content-Type header — browser sets it with boundary
+});
+const data = await res.json();
+localStorage.setItem('token', data.token);
+// data.user.image_url is available immediately
+```
 
-| Dimension | Weight | How calculated |
+---
+
+### Upload Profile Photo (after login)
+
+```js
+const form = new FormData();
+form.append('image', fileInput.files[0]);
+
+const res = await fetch('/api/auth/profile/image/', {
+  method: 'PATCH',
+  headers: { 'Authorization': `Token ${token}` },
+  body: form
+});
+const data = await res.json();
+// data.user.image_url — new absolute URL
+```
+
+---
+
+### Candidate: Browse Jobs + CV Upload Flow
+
+```
+1. GET  /api/jobs/           → show job list (has_applied, my_score per job)
+2. GET  /api/jobs/<id>/apply-info/  → show job detail + my current application status
+3. POST /api/candidates/upload/ (multipart)  → upload CV for chosen job
+4. GET  /api/jobs/my-applications/  → show all my applications history
+```
+
+---
+
+### Candidate: CV Upload
+
+```js
+const form = new FormData();
+form.append('cv_file', pdfFileInput.files[0]);
+form.append('job_id', selectedJobId);
+form.append('skills', JSON.stringify(['Python', 'Django']));
+form.append('experience_years', '3');
+form.append('education', 'BSc Computer Science');
+form.append('professional_summary', 'Backend engineer with 3 years experience...');
+// name, email, github auto-filled from user account
+
+const res = await fetch('/api/candidates/upload/', {
+  method: 'POST',
+  headers: { 'Authorization': `Token ${token}` },
+  body: form
+});
+const data = await res.json();
+// data.scoring_summary.strong / .average / .weak
+```
+
+---
+
+### Recruiter: Ranking + Decision Flow
+
+```
+1. POST /api/ranking/run/                     → run AI ranking for a job
+2. GET  /api/ranking/<job_id>/                → view ranked candidates with scoring_summary
+3. POST /api/ranking/<id>/override/           → adjust score if needed
+4. POST /api/ranking/<id>/accept/             → send acceptance email
+   POST /api/ranking/<id>/reject/             → send rejection email (auto or custom reasons)
+5. GET  /api/stats/                           → dashboard overview
+```
+
+---
+
+### Scoring Summary Structure
+
+Every scoring result includes a `scoring_summary` object:
+
+```json
+{
+  "composite_score": 78.5,
+  "strong": [
+    { "dimension": "skills", "score": 85.0, "reason": "Strong Python/Django alignment" }
+  ],
+  "average": [
+    { "dimension": "experience", "score": 62.0, "reason": "2 years meets minimum" }
+  ],
+  "weak": [
+    { "dimension": "education", "score": 45.0, "reason": "No formal CS degree on file" }
+  ]
+}
+```
+
+| Category | Score range | Meaning |
 |---|---|---|
-| Semantic alignment | 32% | Cosine similarity between CV embedding and job description embedding |
-| Required skills | 28% | `matched_required / total_required * 100` |
-| Preferred skills | 12% | `matched_preferred / total_preferred * 100` |
-| Experience fit | 18% | 100 if meets minimum; penalized by 18pts per year shortfall |
-| Education signals | 10% | Keyword match between education text and job description |
-
-### Score tier classification
-
-| Score | Tier | Label |
-|---|---|---|
-| ≥ 75 | `strong` | Strong Match |
-| 50–74 | `average` | Average Match |
-| < 50 | `weak` | Weak Match |
-
-### Why summary_text shows specific reasons
-
-Each dimension entry in `scoring_summary` includes:
-- `score` — exact numeric score (0–100)
-- `weight_pct` — how much this dimension counts toward total
-- `weighted_contribution` — actual points contributed
-- `reason` — human-readable explanation of why this score was given
-- `matched` / `missing` — exact skill lists (for skills dimensions)
+| `strong` | ≥ 75 | Clear strength — highlight in accept emails |
+| `average` | 50 – 74 | Acceptable — context-dependent |
+| `weak` | < 50 | Gap — used as basis for reject email reasons |
 
 ---
 
-## 8. Frontend Integration Guide
+### HTTP Status Code Summary
 
-### Login flow
-```
-POST /api/auth/login/ → { token, user: { role } }
-Store token in localStorage/cookie.
-Send on every request: Authorization: Token <token>
-```
-
-### Candidate flow
-```
-1. Register as candidate: POST /api/auth/register/ { role: "candidate", ... }
-2. Upload CV: POST /api/candidates/upload/ with cv_file + job_id
-   → Returns instant score, scoring_summary, matched/missing skills
-3. View own profile: GET /api/candidates/  (shows only own)
-```
-
-### Recruiter flow
-```
-1. Login as recruiter
-2. Create jobs: POST /api/jobs/create/
-3. Run ranking: POST /api/ranking/run/ { job_id, only_target_job_candidates: true }
-4. View rankings: GET /api/ranking/<job_id>/
-   → Each ranking has scoring_summary with strong/average/weak breakdown
-5. Override score: POST /api/ranking/<id>/override/ { human_score, human_decision }
-6. Accept candidate: POST /api/ranking/<id>/accept/  → Email sent automatically
-7. Reject candidate: POST /api/ranking/<id>/reject/ { rejection_reasons }  → Detailed email sent
-```
+| Code | Meaning |
+|---|---|
+| 200 | Success |
+| 201 | Created |
+| 204 | Deleted (no body) |
+| 400 | Validation error — check `details` |
+| 401 | Missing or invalid token |
+| 403 | Insufficient role (e.g. candidate hitting recruiter endpoint) |
+| 404 | Resource not found |
+| 500 | Server error |
 
 ---
 
-## 9. Running the Project
+### Common Headers
 
-```bash
-cd ai_cv_system
-python -m venv env
-source env/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-# Edit .env with your keys
-
-python manage.py migrate
-python manage.py createsuperuser
-python manage.py runserver
 ```
+Authorization: Token 9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b
+Content-Type: application/json          (for JSON requests)
+Content-Type: multipart/form-data       (for file uploads — set by browser/axios automatically)
+```
+
+> **Tip for Axios/fetch:** When uploading files with `FormData`, do **not** manually set `Content-Type`. Let the browser set it so the multipart boundary is included correctly.
