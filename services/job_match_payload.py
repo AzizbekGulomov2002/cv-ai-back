@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from apps.candidates.models import Candidate
 from apps.jobs.models import Job
 from apps.ranking.models import CandidateRanking, RankingSession
+from apps.ranking.rank_utils import leaderboard_rank_score_100
 
 
 def _norm_skill(s: str) -> str:
@@ -81,8 +82,9 @@ def candidate_short_dict(candidate: Candidate) -> Dict[str, Any]:
 
 def get_ranking_context(candidate: Candidate, job: Job) -> Tuple[Optional[int], int, bool]:
     """
-    (rank, total_candidates, from_session)
-    Agar so‘nggi sessiyada nomzod bo‘lmasa: rank=None, total=active count, from_session=False
+    (rank_position, total_candidates, from_session)
+    rank_position = ai_rank (1-based). ``rank`` 0–100 uchun ``leaderboard_rank_score_100`` ishlating.
+    Agar so‘nggi sessiyada nomzod bo‘lmasa: rank_position=None, total=active count, from_session=False
     """
     total_active = Candidate.objects.filter(is_active=True).count()
     session = (
@@ -183,6 +185,7 @@ def format_frontend_job_bundle(raw: Dict[str, Any]) -> Dict[str, Any]:
         "ranking": {
             "score": r.get("score", 0),
             "rank": r.get("rank"),
+            "rank_position": r.get("rank_position"),
             "total_candidates": r.get("total_candidates", 0),
         },
         "matching": {
@@ -216,7 +219,10 @@ def build_job_evaluation_payload(
     matched = list(ev.get("matched_skills") or [])
     missing = list(ev.get("missing_skills") or [])
     cov = required_skills_coverage_percent(skill_breakdown, job)
-    rank, total, from_sess = get_ranking_context(candidate, job)
+    rank_pos, total, from_sess = get_ranking_context(candidate, job)
+    rank_0_100 = None
+    if rank_pos is not None and total and from_sess:
+        rank_0_100 = leaderboard_rank_score_100(rank_pos, total)
 
     explanation = build_explanation_block(ev, candidate, job)
     fairness = build_fairness_block(candidate, list(ev.get("bias_flags") or []))
@@ -227,7 +233,8 @@ def build_job_evaluation_payload(
         "job": {"id": job.id, "title": job.title, "company": job.company},
         "ranking": {
             "score": round(float(ev.get("score", 0)), 2),
-            "rank": rank,
+            "rank": rank_0_100,
+            "rank_position": rank_pos,
             "total_candidates": total,
             "leaderboard_from_latest_session": from_sess,
         },

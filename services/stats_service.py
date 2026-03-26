@@ -325,6 +325,7 @@ class StatsService:
 
     def _top_candidates(self, limit: int = 10) -> list:
         from apps.ranking.models import CandidateRanking
+        from apps.ranking.rank_utils import leaderboard_rank_score_100
 
         top = (
             CandidateRanking.objects.select_related("candidate", "session__job")
@@ -343,7 +344,15 @@ class StatsService:
                     "experience_years": cand.experience_years,
                     "ai_score": cr.ai_score,
                     "ai_rank": cr.ai_rank,
-                    "rank": float(cr.rank) if cr.rank is not None else float(cr.ai_rank),
+                    "rank": (
+                        float(cr.rank)
+                        if cr.rank is not None
+                        else leaderboard_rank_score_100(
+                            cr.ai_rank,
+                            int(cr.session.candidates_count or 0) or cr.ai_rank,
+                        )
+                    ),
+                    "rank_position": cr.ai_rank,
                     "human_decision": cr.human_decision,
                     "job_id": cr.session.job_id,
                     "job_title": cr.session.job.title,

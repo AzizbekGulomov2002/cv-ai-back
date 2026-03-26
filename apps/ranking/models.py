@@ -5,6 +5,8 @@ from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
 
+from apps.ranking.rank_utils import leaderboard_rank_score_100
+
 
 class RankingSession(models.Model):
     """
@@ -82,12 +84,12 @@ class CandidateRanking(models.Model):
         help_text='AI-generated rank position'
     )
 
-    # Persisted float (e.g. 1.0 = top of session); synced with leaderboard order, exposed in API & prompts
+    # 0–100 leaderboard rank score from position: 100*(N-pos+1)/N (1st of N → 100)
     rank = models.FloatField(
         null=True,
         blank=True,
-        validators=[MinValueValidator(0.0)],
-        help_text='Final rank stored as float (typically float(ai_rank), 1-based). Saved to DB for API and audit.',
+        validators=[MinValueValidator(0.0), MaxValueValidator(100.0)],
+        help_text='Leaderboard rank on 0–100 scale from session position (best ≈ 100).',
     )
 
     # Explanation data (MANDATORY for high-risk AI system)
@@ -189,9 +191,21 @@ class CandidateRanking(models.Model):
         return f"Rank #{self.ai_rank} (rank={r}): {self.candidate.name} (Score: {self.ai_score})"
 
     def save(self, *args, **kwargs):
-        """Keep ``rank`` aligned with ``ai_rank`` when only integer rank was set."""
-        if self.ai_rank is not None:
-            self.rank = float(self.ai_rank)
+        """Recompute ``rank`` (0–100) from ``ai_rank`` and session size."""
+        if self.ai_rank is not None and self.session_id:
+            total = 0
+            if getattr(self, "session", None) is not None:
+                total = int(self.session.candidates_count or 0)
+            else:
+                total = (
+                    RankingSession.objects.filter(pk=self.session_id)
+                    .values_list("candidates_count", flat=True)
+                    .first()
+                    or 0
+                )
+            if total <= 0:
+                total = max(int(self.ai_rank), 1)
+            self.rank = leaderboard_rank_score_100(self.ai_rank, total)
         super().save(*args, **kwargs)
 
     @property

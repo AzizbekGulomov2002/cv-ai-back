@@ -223,6 +223,6 @@ It is most effective when:
 
 ---
 
-## 11) Persisted rank (`rank` float in DB)
+## 11) Persisted rank (`rank` 0–100 in DB)
 
-Har bir `CandidateRanking` yozuvi DB da **`rank`** maydonini **FloatField** sifatida saqlaydi (odatda `float(ai_rank)`, masalan `1.0`, `2.0`). `POST /api/ranking/run/` dan keyin `explanation` matni oxirida `LEADERBOARD_CONTEXT` bloki paydo bo‘ladi (`persisted_final_rank_float`, `position_in_session`) — bu matn LLM / audit uchun ham, API dagi **`rank`** bilan mos keladi. UI da o‘rin: `rank` + `session_total`; umumiy foiz: `final_score` / `ai_score`.
+Har bir `CandidateRanking` yozuvi DB da **`rank`** ni **0–100** shkalada saqlaydi: sessiyadagi o‘rindan `100 * (N - pos + 1) / N` (eng yaxshi o‘rin ≈ 100, eng pastki ≈ `100/N`). Butun o‘rin **`ai_rank`** / **`rank_position`** API da. `POST /api/ranking/run/` dan keyin `explanation` oxirida `LEADERBOARD_CONTEXT` da `leaderboard_rank_0_100` ko‘rinadi. Moslik foizi: `final_score` / `ai_score`; **leaderboard** o‘rni foizi: **`rank`** (0–100).

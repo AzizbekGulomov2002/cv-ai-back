@@ -17,6 +17,7 @@ from services.api_actor import get_api_actor
 from services.email_service import EmailService
 from services.ranking_service import RankingService
 from .models import RankingSession, CandidateRanking
+from .rank_utils import leaderboard_rank_score_100
 from .serializers import (
     RankingSessionSerializer, CandidateRankingSerializer,
     RankingRunSerializer, HumanOverrideSerializer,
@@ -376,7 +377,14 @@ def candidate_rank_history(request, candidate_id):
                 "job_title": job.title,
                 "company": getattr(job, "company", "") or "",
                 "ai_rank": cr.ai_rank,
-                "rank": float(cr.rank) if cr.rank is not None else float(cr.ai_rank),
+                "rank_position": cr.ai_rank,
+                "rank": (
+                    float(cr.rank)
+                    if cr.rank is not None
+                    else leaderboard_rank_score_100(cr.ai_rank, total)
+                    if total
+                    else None
+                ),
                 "session_total": total,
                 "ai_score": round(float(cr.ai_score), 2),
                 "final_score": round(float(cr.final_score), 2),

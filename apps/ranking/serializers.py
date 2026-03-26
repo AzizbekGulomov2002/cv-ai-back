@@ -26,7 +26,8 @@ class RankingSessionSerializer(serializers.ModelSerializer):
 class CandidateRankingSerializer(serializers.ModelSerializer):
     """
     Serializer for individual candidate rankings.
-    ``rank`` — DB dagi FloatField (odatda float(ai_rank), masalan 1.0, 2.0).
+    ``rank`` — 0–100 shkala (sessiyadagi o‘rindan: eng yaxshisi ≈100).
+    ``rank_position`` — butun o‘rin (``ai_rank``, 1=eng yuqori ball).
     ``session_total`` — sessiyadagi jami nomzodlar soni.
     """
     candidate = CandidateSerializer(read_only=True)
@@ -40,6 +41,7 @@ class CandidateRankingSerializer(serializers.ModelSerializer):
     )
     scoring_summary = serializers.SerializerMethodField()
     session_total = serializers.SerializerMethodField()
+    rank_position = serializers.IntegerField(source="ai_rank", read_only=True)
 
     @staticmethod
     def get_scoring_summary(obj):
@@ -57,7 +59,7 @@ class CandidateRankingSerializer(serializers.ModelSerializer):
     class Meta:
         model = CandidateRanking
         fields = [
-            'id', 'candidate', 'ai_score', 'ai_rank', 'rank', 'session_total',
+            'id', 'candidate', 'ai_score', 'ai_rank', 'rank', 'rank_position', 'session_total',
             'matched_skills',
             'missing_skills', 'explanation', 'bias_flags', 'match_breakdown',
             'scoring_summary',
@@ -68,7 +70,7 @@ class CandidateRankingSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'ai_score', 'ai_rank', 'rank', 'session_total',
+            'id', 'ai_score', 'ai_rank', 'rank', 'rank_position', 'session_total',
             'matched_skills', 'missing_skills',
             'explanation', 'bias_flags', 'match_breakdown', 'scoring_summary',
             'created_at', 'updated_at', 'reviewed_at',

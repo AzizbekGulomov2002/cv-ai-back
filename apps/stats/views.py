@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from apps.users.permissions import IsRecruiter
+from apps.ranking.rank_utils import leaderboard_rank_score_100
 from services.stats_service import StatsService
 
 logger = logging.getLogger(__name__)
@@ -111,16 +112,25 @@ def job_stats_detail(request, job_id):
     # Rankings list (latest session)
     latest_rankings = []
     if sessions:
+        sess0 = sessions[0]
+        total_sess = int(sess0.candidates_count or 0)
         latest_qs = CandidateRanking.objects.filter(
-            session=sessions[0]
-        ).select_related("candidate").order_by("ai_rank")
+            session=sess0
+        ).select_related("candidate", "session").order_by("ai_rank")
+        row_count = latest_qs.count()
+        nbase = total_sess or max(row_count, 1)
         for cr in latest_qs:
             mb = cr.match_breakdown if isinstance(cr.match_breakdown, dict) else {}
             latest_rankings.append(
                 {
                     "ranking_id": cr.id,
                     "ai_rank": cr.ai_rank,
-                    "rank": float(cr.rank) if cr.rank is not None else float(cr.ai_rank),
+                    "rank_position": cr.ai_rank,
+                    "rank": (
+                        float(cr.rank)
+                        if cr.rank is not None
+                        else leaderboard_rank_score_100(cr.ai_rank, nbase)
+                    ),
                     "candidate_id": cr.candidate.id,
                     "name": cr.candidate.name,
                     "email": cr.candidate.email,

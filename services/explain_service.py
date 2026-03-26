@@ -318,18 +318,18 @@ class ExplanationService:
         *,
         position: int,
         session_total: int,
-        rank_float: float,
+        rank_score_0_100: float,
         composite_score: float,
         session_id: int,
         job_title: str,
     ) -> str:
         """
-        Qator oxiriga qo‘shiladi: DB da saqlanadigan ``rank`` (float) va sessiya konteksti.
-        Keyingi LLM / prompt zanjirlarida shu blokdan foydalanish mumkin.
+        Qator oxiriga qo‘shiladi: DB dagi ``rank`` (0–100, o‘rindan hisoblangan) va sessiya konteksti.
         """
         return (
             "\n\n---\nLEADERBOARD_CONTEXT (audit / UI / LLM):\n"
-            f"- persisted_final_rank_float (DB column CandidateRanking.rank): {rank_float:.6f}\n"
+            f"- leaderboard_rank_0_100 (DB column CandidateRanking.rank): {rank_score_0_100:.4f}/100 "
+            f"(formula: 100*(N-pos+1)/N; pos={position}, N={session_total})\n"
             f"- position_in_session (1=best): {position} of {session_total}\n"
             f"- ranking_session_id: {session_id}\n"
             f"- job_title: {job_title}\n"

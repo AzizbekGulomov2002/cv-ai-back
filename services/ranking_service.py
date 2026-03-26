@@ -8,6 +8,7 @@ from django.db.models import QuerySet
 from apps.candidates.models import Candidate
 from apps.jobs.models import Job
 from apps.ranking.models import RankingSession, CandidateRanking
+from apps.ranking.rank_utils import leaderboard_rank_score_100
 from .embedding_service import EmbeddingService
 from .explain_service import ExplanationService
 
@@ -172,24 +173,26 @@ class RankingService:
         total_ranked = len(candidate_scores)
         ranking_objects = []
         for rank, (candidate, score, ev) in enumerate(candidate_scores, 1):
-            rank_float = float(rank)
+            rank_score_100 = leaderboard_rank_score_100(rank, total_ranked)
             mb = ev.get("match_breakdown")
             mb = dict(mb) if isinstance(mb, dict) else {}
-            mb["rank"] = rank_float
+            mb["rank"] = rank_score_100
+            mb["rank_position"] = rank
             mb["session_total"] = total_ranked
             mb["session_id"] = session.id
             mb["job_id"] = job.id
             ss = mb.get("scoring_summary")
             if isinstance(ss, dict):
                 ss = dict(ss)
-                ss["rank"] = rank_float
+                ss["rank"] = rank_score_100
+                ss["rank_position"] = rank
                 ss["session_total"] = total_ranked
                 mb["scoring_summary"] = ss
 
             footer = self.explanation_service.leaderboard_footer_for_ranking(
                 position=rank,
                 session_total=total_ranked,
-                rank_float=rank_float,
+                rank_score_0_100=rank_score_100,
                 composite_score=float(score),
                 session_id=session.id,
                 job_title=job.title,
@@ -201,7 +204,7 @@ class RankingService:
                 candidate=candidate,
                 ai_score=score,
                 ai_rank=rank,
-                rank=rank_float,
+                rank=rank_score_100,
                 matched_skills=ev["matched_skills"],
                 missing_skills=ev["missing_skills"],
                 explanation=explanation,

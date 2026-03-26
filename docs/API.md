@@ -535,34 +535,35 @@ Get all rankings for a job (latest session unless `session_id` is passed). **Rec
 
 Har bir `rankings[]` elementida:
 
-- **`ai_rank`** — butun son, sessiyadagi o‘rin (1 = eng yuqori composite ball).
-- **`rank`** — **FloatField**, DB da saqlanadi (odatda `float(ai_rank)`, masalan `1.0`, `2.0`). UI / “Potential Fit” yonida o‘rin ko‘rsatish uchun `rank` + `session_total` ishlating; **foiz** uchun `final_score` / `ai_score`.
-- **`session_total`** — shu sessiyada jami nechta nomzod (`candidates_count`).
-- **`explanation`** oxirida `LEADERBOARD_CONTEXT` bloki: `persisted_final_rank_float`, `position_in_session`, `session_id` — keyingi LLM / audit uchun.
-- **`match_breakdown.rank`** va **`scoring_summary.rank`** — ham `float` (JSON ichida ham saqlanadi).
+- **`ai_rank`** / **`rank_position`** — butun o‘rin (1 = eng yuqori composite ball).
+- **`rank`** — **0–100** leaderboard balli, DB da saqlanadi: `100 * (N - pos + 1) / N` (N = `session_total`, pos = `ai_rank`). Masalan N=3: 1→100, 2→66.67, 3→33.33.
+- **`session_total`** — shu sessiyada jami nomzod (`candidates_count`).
+- **`explanation`** oxirida `LEADERBOARD_CONTEXT`: `leaderboard_rank_0_100`, `position_in_session`.
+- **`match_breakdown.rank`** / **`rank_position`** va **`scoring_summary`** dagi `rank` — 0–100 bilan mos.
 
-**Misollar (bitta nomzod yozuvi, qisqartirilgan):**
+**Misol (2-o‘rin, jami 3 nomzod):**
 
 ```json
 {
   "id": 14,
   "ai_score": 50.17,
   "ai_rank": 2,
-  "rank": 2.0,
+  "rank_position": 2,
+  "rank": 66.6667,
   "session_total": 3,
   "final_score": 50.17,
-  "candidate": { "id": 15, "name": "AZIZBEK GULOMOV", "email": "..." },
-  "explanation": "... LEADERBOARD_CONTEXT ... persisted_final_rank_float (DB column CandidateRanking.rank): 2.000000 ... position_in_session: 2 of 3 ...",
+  "candidate": { "id": 15, "name": "AZIZBEK GULOMOV" },
+  "explanation": "... leaderboard_rank_0_100 ... 66.6667/100 (formula: 100*(N-pos+1)/N; pos=2, N=3) ...",
   "match_breakdown": {
-    "rank": 2.0,
+    "rank": 66.6667,
+    "rank_position": 2,
     "session_total": 3,
-    "composite_score": 50.17,
-    "scoring_summary": { "rank": 2.0, "session_total": 3, "strong": [], "weak": [] }
+    "composite_score": 50.17
   }
 }
 ```
 
-**Potential Fit / foiz:** kartochkada foiz sifatida **`final_score`** yoki **`ai_score`**; o‘rin uchun **`rank`** (float) va **`session_total`** (masalan label: “2 / 3”).
+**Potential Fit:** umumiy moslik foizi — **`final_score` / `ai_score`**; **leaderboard** o‘rni foizi — **`rank`** (0–100). Label “2 / 3” uchun `rank_position` + `session_total`.
 
 ---
 
@@ -584,7 +585,8 @@ Bitta nomzodning **barcha** ranking sessiyalaridagi natijalari (yangisidan eskis
       "job_title": "Backend engineer",
       "company": "Google",
       "ai_rank": 2,
-      "rank": 2.0,
+      "rank_position": 2,
+      "rank": 66.6667,
       "session_total": 3,
       "ai_score": 50.17,
       "final_score": 50.17,
