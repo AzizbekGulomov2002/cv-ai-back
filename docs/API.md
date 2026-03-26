@@ -531,29 +531,45 @@ Preview match score between one candidate and one job without saving. **Auth req
 
 ### `GET /api/ranking/<job_id>/`
 
-Get all rankings for a job, ordered by rank. **Auth required.**
+Get all rankings for a job (latest session unless `session_id` is passed). **Recruiter only.**
+
+Har bir elementda:
+
+- **`rank`** — shu sessiyadagi o‘rni (`ai_rank` bilan bir xil, 1 = eng yuqori ball).
+- **`session_total`** — shu sessiyada jami nechta nomzod ranking qilingan (`candidates_count`).
+- **`match_breakdown.rank`** / **`match_breakdown.session_total`** — yangi `POST /api/ranking/run/` dan keyin JSON ichida ham saqlanadi (audit va UI uchun).
+
+**Potential Fit / foiz:** kartochkada foiz sifatida **`final_score`** yoki **`ai_score`** ishlating; alohida o‘lcham balli (masalan, “Preferred skills: 0”) umumiy foiz emas.
+
+**Response 200 (qisqacha):** `rankings` ro‘yxati — to‘liq struktura `CandidateRankingSerializer` bo‘yicha (`candidate`, `ai_score`, `ai_rank`, `rank`, `session_total`, `match_breakdown`, …).
+
+---
+
+### `GET /api/ranking/candidates/<candidate_id>/rank-history/`
+
+Bitta nomzodning **barcha** ranking sessiyalaridagi natijalari (yangisidan eskisiga). **Recruiter only.**
 
 **Response 200:**
 ```json
-[
-  {
-    "id": 45,
-    "candidate_id": 7,
-    "candidate_name": "Ali Nazarov",
-    "job_id": 1,
-    "rank": 1,
-    "score": 91.2,
-    "override_score": null,
-    "final_score": 91.2,
-    "status": "ranked",
-    "email_sent": false,
-    "email_sent_at": null,
-    "email_type": null,
-    "rejection_reasons": null,
-    "scoring_summary": { "composite_score": 91.2, "strong": [...], "average": [...], "weak": [...] },
-    "created_at": "2026-03-26T12:00:00Z"
-  }
-]
+{
+  "candidate_id": 15,
+  "count": 2,
+  "sessions": [
+    {
+      "ranking_id": 14,
+      "session_id": 9,
+      "session_created_at": "2026-03-26T11:58:35.332106Z",
+      "job_id": 1,
+      "job_title": "Backend engineer",
+      "company": "Google",
+      "rank": 2,
+      "session_total": 3,
+      "ai_score": 50.17,
+      "final_score": 50.17,
+      "human_decision": "pending"
+    }
+  ]
+}
 ```
 
 ---

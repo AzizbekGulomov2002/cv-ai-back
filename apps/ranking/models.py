@@ -178,7 +178,17 @@ class CandidateRanking(models.Model):
         
     def __str__(self):
         return f"Rank #{self.ai_rank}: {self.candidate.name} (Score: {self.ai_score})"
-    
+
+    @property
+    def rank(self):
+        """Position in the ranking session (1 = best). Same as ``ai_rank``."""
+        return self.ai_rank
+
+    @property
+    def session_total(self):
+        """Number of candidates ranked in this session."""
+        return int(self.session.candidates_count or 0)
+
     @property
     def is_reviewed(self):
         """Check if human review has been completed."""

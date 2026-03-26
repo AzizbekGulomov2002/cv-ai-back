@@ -347,6 +347,51 @@ def get_ranking_analytics(request):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, IsRecruiter])
+def candidate_rank_history(request, candidate_id):
+    """
+    All ranking results for one candidate across every session (newest session first).
+    Each row includes ``rank`` and ``session_total`` for that run.
+    """
+    get_object_or_404(Candidate, pk=candidate_id, is_active=True)
+    rows = (
+        CandidateRanking.objects.filter(candidate_id=candidate_id)
+        .select_related("session", "session__job")
+        .order_by("-session__created_at", "ai_rank")
+    )
+    sessions_out = []
+    for cr in rows:
+        job = cr.session.job
+        mb = cr.match_breakdown if isinstance(cr.match_breakdown, dict) else {}
+        total = int(cr.session.candidates_count or mb.get("session_total") or 0)
+        sessions_out.append(
+            {
+                "ranking_id": cr.id,
+                "session_id": cr.session_id,
+                "session_created_at": cr.session.created_at.isoformat()
+                if cr.session.created_at
+                else None,
+                "job_id": job.id,
+                "job_title": job.title,
+                "company": getattr(job, "company", "") or "",
+                "rank": cr.ai_rank,
+                "session_total": total,
+                "ai_score": round(float(cr.ai_score), 2),
+                "final_score": round(float(cr.final_score), 2),
+                "human_decision": cr.human_decision,
+            }
+        )
+    return Response(
+        {
+            "candidate_id": candidate_id,
+            "count": len(sessions_out),
+            "sessions": sessions_out,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
 class RankingSessionListView(generics.ListAPIView):
     """
     List all ranking sessions (recruiters only).

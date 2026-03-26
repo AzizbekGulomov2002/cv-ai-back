@@ -168,9 +168,23 @@ class RankingService:
         # Sort by score (highest first)
         candidate_scores.sort(key=lambda x: x[1], reverse=True)
         
-        # Create ranking records
+        # Create ranking records (persist rank + session size inside match_breakdown for audit/UI)
+        total_ranked = len(candidate_scores)
         ranking_objects = []
         for rank, (candidate, score, ev) in enumerate(candidate_scores, 1):
+            mb = ev.get("match_breakdown")
+            mb = dict(mb) if isinstance(mb, dict) else {}
+            mb["rank"] = rank
+            mb["session_total"] = total_ranked
+            mb["session_id"] = session.id
+            mb["job_id"] = job.id
+            ss = mb.get("scoring_summary")
+            if isinstance(ss, dict):
+                ss = dict(ss)
+                ss["rank"] = rank
+                ss["session_total"] = total_ranked
+                mb["scoring_summary"] = ss
+
             ranking = CandidateRanking(
                 session=session,
                 candidate=candidate,
@@ -180,7 +194,7 @@ class RankingService:
                 missing_skills=ev["missing_skills"],
                 explanation=ev["explanation"],
                 bias_flags=ev.get("bias_flags", []),
-                match_breakdown=ev.get("match_breakdown") or {},
+                match_breakdown=mb,
             )
             ranking_objects.append(ranking)
         

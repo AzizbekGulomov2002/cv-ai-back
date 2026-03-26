@@ -27,6 +27,7 @@ class CandidateRankingSerializer(serializers.ModelSerializer):
     """
     Serializer for individual candidate rankings.
     Includes scoring_summary (strong/average/weak with exact numbers and reasons).
+    ``rank`` mirrors ``ai_rank``; ``session_total`` = candidates in this session.
     """
     candidate = CandidateSerializer(read_only=True)
     is_reviewed = serializers.ReadOnlyField()
@@ -38,16 +39,28 @@ class CandidateRankingSerializer(serializers.ModelSerializer):
         read_only=True,
     )
     scoring_summary = serializers.SerializerMethodField()
+    # Explicit ``rank`` for clients that expect this key (same value as ``ai_rank``)
+    rank = serializers.IntegerField(source='ai_rank', read_only=True)
+    session_total = serializers.SerializerMethodField()
 
     @staticmethod
     def get_scoring_summary(obj):
         mb = obj.match_breakdown if isinstance(obj.match_breakdown, dict) else {}
         return mb.get("scoring_summary")
 
+    @staticmethod
+    def get_session_total(obj):
+        n = getattr(obj.session, "candidates_count", None)
+        if n is not None:
+            return int(n)
+        mb = obj.match_breakdown if isinstance(obj.match_breakdown, dict) else {}
+        return int(mb.get("session_total") or 0)
+
     class Meta:
         model = CandidateRanking
         fields = [
-            'id', 'candidate', 'ai_score', 'ai_rank', 'matched_skills',
+            'id', 'candidate', 'ai_score', 'ai_rank', 'rank', 'session_total',
+            'matched_skills',
             'missing_skills', 'explanation', 'bias_flags', 'match_breakdown',
             'scoring_summary',
             'human_decision', 'human_score', 'human_feedback',
@@ -57,7 +70,8 @@ class CandidateRankingSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'ai_score', 'ai_rank', 'matched_skills', 'missing_skills',
+            'id', 'ai_score', 'ai_rank', 'rank', 'session_total',
+            'matched_skills', 'missing_skills',
             'explanation', 'bias_flags', 'match_breakdown', 'scoring_summary',
             'created_at', 'updated_at', 'reviewed_at',
             'email_sent', 'email_sent_at', 'email_type',
