@@ -81,7 +81,15 @@ class CandidateRanking(models.Model):
     ai_rank = models.PositiveIntegerField(
         help_text='AI-generated rank position'
     )
-    
+
+    # Persisted float (e.g. 1.0 = top of session); synced with leaderboard order, exposed in API & prompts
+    rank = models.FloatField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0.0)],
+        help_text='Final rank stored as float (typically float(ai_rank), 1-based). Saved to DB for API and audit.',
+    )
+
     # Explanation data (MANDATORY for high-risk AI system)
     matched_skills = models.JSONField(
         default=list,
@@ -177,12 +185,14 @@ class CandidateRanking(models.Model):
         unique_together = ['session', 'candidate']
         
     def __str__(self):
-        return f"Rank #{self.ai_rank}: {self.candidate.name} (Score: {self.ai_score})"
+        r = self.rank if self.rank is not None else float(self.ai_rank)
+        return f"Rank #{self.ai_rank} (rank={r}): {self.candidate.name} (Score: {self.ai_score})"
 
-    @property
-    def rank(self):
-        """Position in the ranking session (1 = best). Same as ``ai_rank``."""
-        return self.ai_rank
+    def save(self, *args, **kwargs):
+        """Keep ``rank`` aligned with ``ai_rank`` when only integer rank was set."""
+        if self.ai_rank is not None:
+            self.rank = float(self.ai_rank)
+        super().save(*args, **kwargs)
 
     @property
     def session_total(self):

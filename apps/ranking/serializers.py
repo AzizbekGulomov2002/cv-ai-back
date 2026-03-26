@@ -26,8 +26,8 @@ class RankingSessionSerializer(serializers.ModelSerializer):
 class CandidateRankingSerializer(serializers.ModelSerializer):
     """
     Serializer for individual candidate rankings.
-    Includes scoring_summary (strong/average/weak with exact numbers and reasons).
-    ``rank`` mirrors ``ai_rank``; ``session_total`` = candidates in this session.
+    ``rank`` — DB dagi FloatField (odatda float(ai_rank), masalan 1.0, 2.0).
+    ``session_total`` — sessiyadagi jami nomzodlar soni.
     """
     candidate = CandidateSerializer(read_only=True)
     is_reviewed = serializers.ReadOnlyField()
@@ -39,8 +39,6 @@ class CandidateRankingSerializer(serializers.ModelSerializer):
         read_only=True,
     )
     scoring_summary = serializers.SerializerMethodField()
-    # Explicit ``rank`` for clients that expect this key (same value as ``ai_rank``)
-    rank = serializers.IntegerField(source='ai_rank', read_only=True)
     session_total = serializers.SerializerMethodField()
 
     @staticmethod

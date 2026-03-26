@@ -119,7 +119,8 @@ def job_stats_detail(request, job_id):
             latest_rankings.append(
                 {
                     "ranking_id": cr.id,
-                    "rank": cr.ai_rank,
+                    "ai_rank": cr.ai_rank,
+                    "rank": float(cr.rank) if cr.rank is not None else float(cr.ai_rank),
                     "candidate_id": cr.candidate.id,
                     "name": cr.candidate.name,
                     "email": cr.candidate.email,

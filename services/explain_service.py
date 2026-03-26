@@ -313,6 +313,29 @@ class ExplanationService:
         lines.append(breakdown.get("fairness_notice", ""))
         return "\n".join(lines)
 
+    def leaderboard_footer_for_ranking(
+        self,
+        *,
+        position: int,
+        session_total: int,
+        rank_float: float,
+        composite_score: float,
+        session_id: int,
+        job_title: str,
+    ) -> str:
+        """
+        Qator oxiriga qo‘shiladi: DB da saqlanadigan ``rank`` (float) va sessiya konteksti.
+        Keyingi LLM / prompt zanjirlarida shu blokdan foydalanish mumkin.
+        """
+        return (
+            "\n\n---\nLEADERBOARD_CONTEXT (audit / UI / LLM):\n"
+            f"- persisted_final_rank_float (DB column CandidateRanking.rank): {rank_float:.6f}\n"
+            f"- position_in_session (1=best): {position} of {session_total}\n"
+            f"- ranking_session_id: {session_id}\n"
+            f"- job_title: {job_title}\n"
+            f"- composite_match_score: {composite_score:.4f}/100\n"
+        )
+
     def merge_bias_flags_for_ranking(
         self,
         heuristic_flags: List[str],

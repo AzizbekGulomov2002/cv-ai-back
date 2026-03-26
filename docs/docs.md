@@ -220,3 +220,9 @@ It is most effective when:
 - filters are used intentionally,
 - explanations are visible,
 - and humans stay in control of final hiring outcomes.
+
+---
+
+## 11) Persisted rank (`rank` float in DB)
+
+Har bir `CandidateRanking` yozuvi DB da **`rank`** maydonini **FloatField** sifatida saqlaydi (odatda `float(ai_rank)`, masalan `1.0`, `2.0`). `POST /api/ranking/run/` dan keyin `explanation` matni oxirida `LEADERBOARD_CONTEXT` bloki paydo bo‘ladi (`persisted_final_rank_float`, `position_in_session`) — bu matn LLM / audit uchun ham, API dagi **`rank`** bilan mos keladi. UI da o‘rin: `rank` + `session_total`; umumiy foiz: `final_score` / `ai_score`.

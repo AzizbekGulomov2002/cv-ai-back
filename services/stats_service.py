@@ -343,6 +343,7 @@ class StatsService:
                     "experience_years": cand.experience_years,
                     "ai_score": cr.ai_score,
                     "ai_rank": cr.ai_rank,
+                    "rank": float(cr.rank) if cr.rank is not None else float(cr.ai_rank),
                     "human_decision": cr.human_decision,
                     "job_id": cr.session.job_id,
                     "job_title": cr.session.job.title,
