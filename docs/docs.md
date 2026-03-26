@@ -197,6 +197,19 @@ To make implementation easier for recruiters and visually stronger, focus on:
 - sortable columns and sticky table header
 - lightweight animations only where they improve comprehension
 
+### F) One-call recruiter statistics (`GET /api/stats/`)
+Texnik maydonlar va query parametrlar uchun batafsil: [API.md](./API.md) → **Statistics Dashboard**.
+
+Qisqa ma’nosi (frontend “wow” bloklari bilan mos):
+
+- **Candidate funnel** (`candidate_funnel`) — faol va CV fayli bor kandidatlar bazasida: jami CV → AI balli bo‘yicha “qualified” va “top” → kamida bitta qatorda shortlist/accept bo‘lganlar (“interview selected”). Thresholdlarni `qualified_min_score` va `top_tier_min_score` bilan sozlash mumkin.
+- **Skill distribution** — CV dan chiqarilgan skill ro‘yxati; foizlar “kamida bitta skill bor” kandidatlar ichidan hisoblanadi (ko‘p skill tufayli yig‘indi 100% dan oshishi mumkin).
+- **Experience distribution** — 0–2 / 3–5 / 6+ yil va noma’lum.
+- **Salary insights** — kandidat kutilgan maoshi emas, balki **faol vakansiyalar**dagi `salary_min` / `salary_max` asosida diapazon va o‘rtacha midpoint.
+- **Location breakdown** — asosan ariza biriktirilgan vakansiya joyi (`target_job.location`).
+
+Eski **pipeline** maydoni ranking qatorlari bo‘yicha pending/shortlisted/accepted/rejected yig‘indisidir; vizual funnel bilan aralashtirmaslik kerak.
+
 ---
 
 ## 9) Recommended operating model

@@ -3,7 +3,9 @@ Statistics service for the AI CV System recruiter dashboard.
 
 Logic design:
   - Overview counts (jobs, candidates, sessions, emails)
-  - Candidate pipeline funnel (pending → shortlisted → accepted / rejected)
+  - Pipeline by human_decision on ranking rows (pending → shortlisted → accepted / rejected)
+  - Candidate funnel for UI (total CVs → qualified / top tier by max ai_score → interview flags)
+  - Skill / experience / salary (jobs) / location (target_job) distributions
   - Per-job stats (applicants, avg_score, top_score, decision breakdown)
   - Score distribution histogram
   - Skills gap analysis (most missing & most matched across all rankings)
@@ -30,10 +32,17 @@ class StatsService:
     queries are grouped and batched to minimise round-trips.
     """
 
-    def get_dashboard(self, days: int = 30) -> Dict[str, Any]:
+    def get_dashboard(
+        self,
+        days: int = 30,
+        *,
+        qualified_min_score: float = 50.0,
+        top_tier_min_score: float = 75.0,
+        skill_distribution_limit: int = 20,
+    ) -> Dict[str, Any]:
         """
         Full dashboard payload for GET /api/stats/.
-        `days` controls the look-back window for trend data.
+        `days` — trend window. Thresholds tune the candidate funnel stages.
         """
         since = timezone.now() - timedelta(days=days)
 
@@ -47,11 +56,29 @@ class StatsService:
         users_summary = self._users_summary()
         email_stats = self._email_stats()
 
+        candidate_funnel = self._candidate_funnel_visual(
+            qualified_min_score=qualified_min_score,
+            top_tier_min_score=top_tier_min_score,
+        )
+        skill_distribution = self._skill_distribution_pct(limit=skill_distribution_limit)
+        experience_distribution = self._experience_distribution_pct()
+        salary_insights = self._salary_insights()
+        location_breakdown = self._location_breakdown_pct()
+
         return {
             "generated_at": timezone.now().isoformat(),
             "period_days": days,
+            "funnel_thresholds": {
+                "qualified_min_ai_score": qualified_min_score,
+                "top_tier_min_ai_score": top_tier_min_score,
+            },
             "overview": overview,
             "pipeline": pipeline,
+            "candidate_funnel": candidate_funnel,
+            "skill_distribution": skill_distribution,
+            "experience_distribution": experience_distribution,
+            "salary_insights": salary_insights,
+            "location_breakdown": location_breakdown,
             "per_job": per_job,
             "score_distribution": score_dist,
             "skills_gap": skills,
@@ -147,6 +174,283 @@ class StatsService:
                 if (funnel["accepted"] + funnel["rejected"]) > 0
                 else 0
             ),
+        }
+
+    # ------------------------------------------------------------------
+    # 2b. Recruiter dashboard funnel & distributions (single API)
+    # ------------------------------------------------------------------
+
+    def _active_candidates_with_cv_qs(self):
+        from apps.candidates.models import Candidate
+
+        return Candidate.objects.filter(is_active=True, cv_file__isnull=False).exclude(
+            cv_file=""
+        )
+
+    def _candidate_funnel_visual(
+        self,
+        qualified_min_score: float,
+        top_tier_min_score: float,
+    ) -> Dict[str, Any]:
+        """
+        Pipeline-style counts for UI: total CVs → qualified (by max AI score) → top tier → interview.
+        Pool = active candidates with a CV file. Interview = shortlisted | accepted on any ranking.
+        """
+        from apps.ranking.models import CandidateRanking
+
+        pool_qs = self._active_candidates_with_cv_qs()
+        total_cvs = pool_qs.count()
+        pool_ids = set(pool_qs.values_list("id", flat=True))
+
+        max_by_cand = {
+            row["candidate_id"]: row["m"]
+            for row in CandidateRanking.objects.values("candidate_id").annotate(
+                m=Max("ai_score")
+            )
+        }
+        qualified_ids = {
+            cid
+            for cid, m in max_by_cand.items()
+            if m is not None and float(m) >= qualified_min_score
+        }
+        top_ids = {
+            cid
+            for cid, m in max_by_cand.items()
+            if m is not None and float(m) >= top_tier_min_score
+        }
+
+        qualified_in_pool = len(qualified_ids & pool_ids)
+        top_in_pool = len(top_ids & pool_ids)
+
+        interview_ids = set(
+            CandidateRanking.objects.filter(
+                human_decision__in=["shortlisted", "accepted"]
+            ).values_list("candidate_id", flat=True).distinct()
+        )
+        interview_in_pool = len(interview_ids & pool_ids)
+
+        def pct(num: int, den: int) -> float:
+            return round(num / den * 100, 1) if den else 0.0
+
+        stages = [
+            {
+                "key": "total_cvs",
+                "label": "Total CVs",
+                "count": total_cvs,
+                "pct_of_total": pct(total_cvs, total_cvs),
+            },
+            {
+                "key": "qualified",
+                "label": "Qualified",
+                "count": qualified_in_pool,
+                "pct_of_total": pct(qualified_in_pool, total_cvs),
+                "definition": (
+                    f"Active candidates with CV whose maximum AI score across all "
+                    f"rankings is ≥ {qualified_min_score}."
+                ),
+            },
+            {
+                "key": "top_candidates",
+                "label": "Top candidates",
+                "count": top_in_pool,
+                "pct_of_total": pct(top_in_pool, total_cvs),
+                "definition": (
+                    f"Active candidates with CV whose maximum AI score across all "
+                    f"rankings is ≥ {top_tier_min_score}."
+                ),
+            },
+            {
+                "key": "interview_selected",
+                "label": "Interview selected",
+                "count": interview_in_pool,
+                "pct_of_total": pct(interview_in_pool, total_cvs),
+                "definition": (
+                    "Distinct active candidates with CV that have at least one ranking "
+                    "with human_decision shortlisted or accepted."
+                ),
+            },
+        ]
+
+        return {
+            "base": "active_candidates_with_cv_file",
+            "total_base": total_cvs,
+            "stages": stages,
+        }
+
+    def _skill_distribution_pct(self, limit: int = 20) -> Dict[str, Any]:
+        """
+        Share of active candidates (with ≥1 extracted skill) that list each skill.
+        Percentages can sum to >100% because candidates have multiple skills.
+        """
+        from apps.candidates.models import Candidate
+
+        qs = Candidate.objects.filter(is_active=True)
+        skill_counter: Counter = Counter()
+        with_skills = 0
+        for skills in qs.values_list("skills", flat=True):
+            items = skills or []
+            if not items:
+                continue
+            with_skills += 1
+            seen = set()
+            for raw in items:
+                if not raw:
+                    continue
+                s = str(raw).strip()
+                if not s:
+                    continue
+                key = s[:120]
+                if key not in seen:
+                    seen.add(key)
+                    skill_counter[key] += 1
+
+        denom = with_skills
+        skills_out = []
+        for name, cnt in skill_counter.most_common(limit):
+            skills_out.append(
+                {
+                    "skill": name,
+                    "candidate_count": cnt,
+                    "pct_of_candidates_with_skills": (
+                        round(cnt / denom * 100, 1) if denom else 0.0
+                    ),
+                }
+            )
+
+        return {
+            "denominator": "active_candidates_with_at_least_one_skill",
+            "candidates_with_skills_count": with_skills,
+            "note": "Percentages are % of candidates who have any skill listed, not % of all candidates.",
+            "skills": skills_out,
+        }
+
+    def _experience_distribution_pct(self) -> Dict[str, Any]:
+        """
+        Buckets by candidate.experience_years: junior 0–2, middle 3–5, senior 6+.
+        """
+        from apps.candidates.models import Candidate
+
+        buckets = {"junior": 0, "middle": 0, "senior": 0, "unknown": 0}
+        for ey in Candidate.objects.filter(is_active=True).values_list(
+            "experience_years", flat=True
+        ):
+            if ey is None:
+                buckets["unknown"] += 1
+            elif ey <= 2:
+                buckets["junior"] += 1
+            elif ey <= 5:
+                buckets["middle"] += 1
+            else:
+                buckets["senior"] += 1
+
+        total = sum(buckets.values())
+        breakdown = []
+        labels = {
+            "junior": "Junior (0–2 years)",
+            "middle": "Middle (3–5 years)",
+            "senior": "Senior (6+ years)",
+            "unknown": "Unknown",
+        }
+        for key in ("junior", "middle", "senior", "unknown"):
+            c = buckets[key]
+            breakdown.append(
+                {
+                    "key": key,
+                    "label": labels[key],
+                    "count": c,
+                    "pct": round(c / total * 100, 1) if total else 0.0,
+                }
+            )
+
+        return {
+            "denominator": "active_candidates",
+            "total": total,
+            "buckets": breakdown,
+        }
+
+    def _salary_insights(self) -> Dict[str, Any]:
+        """
+        From active jobs with both salary_min and salary_max: range and average midpoint.
+        """
+        from apps.jobs.models import Job
+        from decimal import Decimal
+
+        jobs = Job.objects.filter(
+            is_active=True,
+            salary_min__isnull=False,
+            salary_max__isnull=False,
+        )
+        midpoints: list = []
+        currencies: Counter = Counter()
+        global_min: Decimal | None = None
+        global_max: Decimal | None = None
+
+        for j in jobs:
+            if j.salary_min is None or j.salary_max is None:
+                continue
+            smin, smax = j.salary_min, j.salary_max
+            mid = (smin + smax) / 2
+            midpoints.append(float(mid))
+            cur = (j.currency or "USD").strip() or "USD"
+            currencies[cur] += 1
+            if global_min is None or smin < global_min:
+                global_min = smin
+            if global_max is None or smax > global_max:
+                global_max = smax
+
+        if not midpoints:
+            return {
+                "has_data": False,
+                "jobs_with_salary_count": 0,
+                "currency": None,
+                "salary_min": None,
+                "salary_max": None,
+                "avg_expected_salary": None,
+                "note": "No active jobs with both salary_min and salary_max set.",
+            }
+
+        primary_currency = currencies.most_common(1)[0][0]
+        return {
+            "has_data": True,
+            "jobs_with_salary_count": len(midpoints),
+            "currency": primary_currency,
+            "currencies_mix": [{"currency": c, "jobs": n} for c, n in currencies.most_common()],
+            "salary_min": float(global_min) if global_min is not None else None,
+            "salary_max": float(global_max) if global_max is not None else None,
+            "avg_expected_salary": round(sum(midpoints) / len(midpoints), 2),
+            "note": "Based on active Job rows: average of (salary_min + salary_max) / 2 per job.",
+        }
+
+    def _location_breakdown_pct(self) -> Dict[str, Any]:
+        """
+        By target_job.location for active candidates; 'No target job' if unassigned.
+        """
+        from apps.candidates.models import Candidate
+
+        loc_counter: Counter = Counter()
+        qs = Candidate.objects.filter(is_active=True).select_related("target_job")
+        total = qs.count()
+        for c in qs.iterator(chunk_size=500):
+            if c.target_job_id and c.target_job:
+                loc = (c.target_job.location or "").strip() or "Unknown"
+            else:
+                loc = "No target job"
+            loc_counter[loc[:200]] += 1
+
+        rows = []
+        for name, cnt in loc_counter.most_common(30):
+            rows.append(
+                {
+                    "location": name,
+                    "count": cnt,
+                    "pct": round(cnt / total * 100, 1) if total else 0.0,
+                }
+            )
+
+        return {
+            "denominator": "active_candidates",
+            "total": total,
+            "locations": rows,
         }
 
     # ------------------------------------------------------------------

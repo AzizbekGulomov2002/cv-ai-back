@@ -724,76 +724,176 @@ All stats endpoints are **Recruiter only**.
 
 ### `GET /api/stats/`
 
-Full recruiter dashboard statistics.
+Full recruiter dashboard statistics (bitta javobda overview, funnel, taqsimotlar, trends va boshqalar).
 
-**Query param:** `?days=30` (default: 30)
+**Query params**
 
-**Response 200:**
+| Param | Default | Description |
+|--------|---------|-------------|
+| `days` | `30` | Trendlar uchun kunlar (1–365) |
+| `qualified_min_score` | `50` | `candidate_funnel` dagi **Qualified** bosqichi: barcha rankinglar bo‘yicha kandidatning **maksimal** `ai_score` ≥ shu qiymat |
+| `top_tier_min_score` | `75` | **Top candidates** bosqichi: maksimal `ai_score` ≥ shu qiymat |
+| `skill_distribution_limit` | `20` | `skill_distribution.skills` ro‘yxatidagi skill soni (maks. 50) |
+
+**Dashboard funnel (`candidate_funnel`)** — bazaviy to‘plam: **faol** va **CV fayli bor** kandidatlar.
+
+- **Total CVs** — shu to‘plam soni.
+- **Qualified** — to‘plam ichida, kamida bitta rankingda ishtirok etgan va barcha sessiyalar bo‘yicha eng yuqori `ai_score` ≥ `qualified_min_score`.
+- **Top candidates** — xuddi shu bazada maksimal `ai_score` ≥ `top_tier_min_score`.
+- **Interview selected** — to‘plam ichida, kamida bitta `CandidateRanking` qatorida `human_decision` ∈ `shortlisted` yoki `accepted` bo‘lgan **takrorlanmas** kandidatlar.
+
+Eslatma: **Interview selected** soni har doim **Top** dan kichik bo‘lmasligi mumkin (HR past ball bilan ham shortlist qilishi mumkin).
+
+**`pipeline`** — barcha ranking qatorlari bo‘yicha `human_decision` yig‘indisi (pending / shortlisted / accepted / rejected); yuqoridagi vizual funneldan farq qiladi.
+
+**`skill_distribution`** — faol kandidatlarning `skills` JSON massividan. Foiz: **kamida bitta skill ko‘rsatgan** kandidatlar ichidan, shu skillni e’lon qilganlar ulushi (bir kandidatda bir nechta skill bo‘lgani uchun foizlar yig‘indisi 100% dan oshishi mumkin).
+
+**`experience_distribution`** — faol kandidatlar: **Junior** 0–2 yil, **Middle** 3–5, **Senior** 6+, **unknown** — `experience_years` bo‘sh.
+
+**`salary_insights`** — faol **Job** yozuvlari, ikkala maydon ham to‘ldirilgan bo‘lsa: `salary_min`, `salary_max`, valyutalar aralash bo‘lsa `currencies_mix`, o‘rtacha — har bir vakansiya uchun `(min+max)/2` ning o‘rtachasi. Ma’lumot bo‘lmasa `has_data: false`.
+
+**`location_breakdown`** — faol kandidatlar bo‘yicha `target_job.location`; vakansiya biriktirilmagan bo‘lsa qator nomi `No target job`.
+
+**Response 200** (qisqartirilgan namuna; to‘liq maydonlar shu strukturada):
 ```json
 {
+  "generated_at": "2026-03-26T10:00:00+00:00",
+  "period_days": 30,
+  "funnel_thresholds": {
+    "qualified_min_ai_score": 50.0,
+    "top_tier_min_ai_score": 75.0
+  },
   "overview": {
     "total_jobs": 5,
     "active_jobs": 4,
-    "total_candidates": 42,
-    "active_candidates": 38,
-    "total_ranked": 35,
-    "accepted": 4,
-    "rejected": 3,
-    "emails_sent": 7
+    "inactive_jobs": 1,
+    "total_candidates": 120,
+    "active_candidates": 115,
+    "candidates_with_cv": 115,
+    "candidates_with_embedding": 90,
+    "total_ranking_sessions": 12,
+    "total_rankings": 340,
+    "reviewed_rankings": 200,
+    "review_rate_pct": 58.8,
+    "avg_ai_score": 62.5,
+    "max_ai_score": 94.0,
+    "min_ai_score": 12.0
   },
   "pipeline": {
-    "uploaded": 42,
-    "ranked": 35,
-    "accepted": 4,
-    "rejected": 3,
-    "pending": 28
+    "pending": 280,
+    "shortlisted": 30,
+    "accepted": 15,
+    "rejected": 15,
+    "pending_pct": 82.4,
+    "shortlisted_pct": 8.8,
+    "accepted_pct": 4.4,
+    "rejected_pct": 4.4,
+    "total": 340,
+    "acceptance_rate_pct": 50.0
   },
-  "per_job": [
-    {
-      "job_id": 1,
-      "job_title": "Backend Developer",
-      "candidates": 12,
-      "ranked": 10,
-      "avg_score": 71.3,
-      "top_score": 91.2,
-      "accepted": 1,
-      "rejected": 2
-    }
+  "candidate_funnel": {
+    "base": "active_candidates_with_cv_file",
+    "total_base": 120,
+    "stages": [
+      {
+        "key": "total_cvs",
+        "label": "Total CVs",
+        "count": 120,
+        "pct_of_total": 100.0
+      },
+      {
+        "key": "qualified",
+        "label": "Qualified",
+        "count": 45,
+        "pct_of_total": 37.5,
+        "definition": "Active candidates with CV whose maximum AI score across all rankings is ≥ 50.0."
+      },
+      {
+        "key": "top_candidates",
+        "label": "Top candidates",
+        "count": 12,
+        "pct_of_total": 10.0,
+        "definition": "Active candidates with CV whose maximum AI score across all rankings is ≥ 75.0."
+      },
+      {
+        "key": "interview_selected",
+        "label": "Interview selected",
+        "count": 5,
+        "pct_of_total": 4.2,
+        "definition": "Distinct active candidates with CV that have at least one ranking with human_decision shortlisted or accepted."
+      }
+    ]
+  },
+  "skill_distribution": {
+    "denominator": "active_candidates_with_at_least_one_skill",
+    "candidates_with_skills_count": 100,
+    "note": "Percentages are % of candidates who have any skill listed, not % of all candidates.",
+    "skills": [
+      { "skill": "Python", "candidate_count": 65, "pct_of_candidates_with_skills": 65.0 },
+      { "skill": "React", "candidate_count": 40, "pct_of_candidates_with_skills": 40.0 }
+    ]
+  },
+  "experience_distribution": {
+    "denominator": "active_candidates",
+    "total": 115,
+    "buckets": [
+      { "key": "junior", "label": "Junior (0–2 years)", "count": 35, "pct": 30.4 },
+      { "key": "middle", "label": "Middle (3–5 years)", "count": 57, "pct": 49.6 },
+      { "key": "senior", "label": "Senior (6+ years)", "count": 18, "pct": 15.7 },
+      { "key": "unknown", "label": "Unknown", "count": 5, "pct": 4.3 }
+    ]
+  },
+  "salary_insights": {
+    "has_data": true,
+    "jobs_with_salary_count": 4,
+    "currency": "USD",
+    "currencies_mix": [{ "currency": "USD", "jobs": 4 }],
+    "salary_min": 2000.0,
+    "salary_max": 4500.0,
+    "avg_expected_salary": 2750.5,
+    "note": "Based on active Job rows: average of (salary_min + salary_max) / 2 per job."
+  },
+  "location_breakdown": {
+    "denominator": "active_candidates",
+    "total": 115,
+    "locations": [
+      { "location": "Italy", "count": 46, "pct": 40.0 },
+      { "location": "Remote", "count": 40, "pct": 34.8 },
+      { "location": "No target job", "count": 10, "pct": 8.7 }
+    ]
+  },
+  "per_job": [],
+  "score_distribution": [
+    { "range": "0–20", "count": 5 },
+    { "range": "20–40", "count": 12 }
   ],
-  "score_distribution": {
-    "0-50": 8,
-    "50-70": 14,
-    "70-85": 15,
-    "85-100": 5
+  "skills_gap": {
+    "most_missing": [{ "skill": "Kubernetes", "missing_in_count": 18 }],
+    "most_matched": [{ "skill": "Python", "matched_in_count": 25 }],
+    "unique_missing_skills": 40,
+    "unique_matched_skills": 35
   },
-  "skills_gap": [
-    { "skill": "PostgreSQL", "required_in_jobs": 3, "found_in_candidates": 8 }
-  ],
-  "time_trends": {
-    "labels": ["2026-03-01", "2026-03-08", "2026-03-15", "2026-03-22"],
-    "uploads": [5, 8, 12, 6],
-    "rankings": [3, 7, 10, 5]
+  "trends": {
+    "period_days": 30,
+    "candidates_uploaded_per_day": [{ "date": "2026-03-01", "count": 3 }],
+    "ranking_sessions_per_day": [{ "date": "2026-03-01", "count": 1 }],
+    "candidates_last_period": 20,
+    "sessions_last_period": 5
   },
-  "top_candidates": [
-    {
-      "candidate_id": 7,
-      "name": "Ali Nazarov",
-      "best_score": 91.2,
-      "applied_jobs": 2,
-      "status": "ranked"
-    }
-  ],
-  "users_summary": {
-    "total_users": 20,
-    "recruiters": 3,
-    "candidates": 17,
-    "new_this_period": 6
+  "top_candidates": [],
+  "users": {
+    "total_users": 25,
+    "total_recruiters": 3,
+    "total_candidate_accounts": 22,
+    "candidate_accounts_with_cv_profile": 20,
+    "candidate_accounts_without_cv_profile": 2
   },
-  "email_stats": {
-    "total_sent": 7,
-    "accept_emails": 4,
-    "reject_emails": 3,
-    "pending_decisions": 28
+  "emails": {
+    "total_emails_sent": 12,
+    "accept_emails_sent": 6,
+    "reject_emails_sent": 6,
+    "pending_notification": 4,
+    "email_coverage_pct": 50.0
   }
 }
 ```

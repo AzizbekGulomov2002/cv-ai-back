@@ -24,10 +24,19 @@ def recruiter_dashboard(request):
 
     Query params:
       days (int, default 30) — look-back window for trend data
+      qualified_min_score (float, default 50) — AI score threshold for funnel "Qualified"
+      top_tier_min_score (float, default 75) — AI score threshold for funnel "Top candidates"
+      skill_distribution_limit (int, default 20, max 50) — top N skills in skill_distribution
 
     Returns:
+      funnel_thresholds — echoes the score thresholds used for candidate_funnel
       overview        — total counts (jobs, candidates, rankings, scores)
-      pipeline        — funnel: pending → shortlisted → accepted / rejected with %
+      pipeline        — ranking-row funnel: pending → shortlisted → accepted / rejected with %
+      candidate_funnel — dashboard funnel: total CVs → qualified → top → interview selected
+      skill_distribution — % of candidates-with-skills per skill (multi-skill sums can exceed 100%)
+      experience_distribution — junior / middle / senior / unknown from experience_years
+      salary_insights — from active jobs with min+max salary (avg midpoint, range, currency)
+      location_breakdown — % of active candidates by target_job.location
       per_job         — per-job breakdown: applicants, avg/max/min score, decisions, emails
       score_distribution — histogram by 20-point buckets
       skills_gap      — top 15 most missing / most matched skills across all rankings
@@ -43,8 +52,30 @@ def recruiter_dashboard(request):
         except (TypeError, ValueError):
             days = 30
 
+        def _float_param(name: str, default: float) -> float:
+            raw = request.query_params.get(name)
+            if raw is None or raw == "":
+                return default
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                return default
+
+        qualified_min = _float_param("qualified_min_score", 50.0)
+        top_tier_min = _float_param("top_tier_min_score", 75.0)
+        sk_lim_raw = request.query_params.get("skill_distribution_limit", "20")
+        try:
+            skill_distribution_limit = max(1, min(int(sk_lim_raw), 50))
+        except (TypeError, ValueError):
+            skill_distribution_limit = 20
+
         service = StatsService()
-        data = service.get_dashboard(days=days)
+        data = service.get_dashboard(
+            days=days,
+            qualified_min_score=qualified_min,
+            top_tier_min_score=top_tier_min,
+            skill_distribution_limit=skill_distribution_limit,
+        )
 
         return Response(data, status=status.HTTP_200_OK)
 
