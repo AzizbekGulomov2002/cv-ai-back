@@ -2,20 +2,25 @@
 Views for AI-powered candidate ranking system.
 """
 from rest_framework import generics, status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 import logging
 
 from apps.audit.models import AuditLog
 from apps.candidates.models import Candidate
 from apps.jobs.models import Job
+from apps.users.permissions import IsRecruiter
 from services.api_actor import get_api_actor
+from services.email_service import EmailService
 from services.ranking_service import RankingService
 from .models import RankingSession, CandidateRanking
 from .serializers import (
     RankingSessionSerializer, CandidateRankingSerializer,
     RankingRunSerializer, HumanOverrideSerializer,
+    CandidateDecisionEmailSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -344,10 +349,11 @@ def get_ranking_analytics(request):
 
 class RankingSessionListView(generics.ListAPIView):
     """
-    List all ranking sessions.
+    List all ranking sessions (recruiters only).
     """
     serializer_class = RankingSessionSerializer
-    
+    permission_classes = [IsAuthenticated, IsRecruiter]
+
     def get_queryset(self):
         queryset = RankingSession.objects.all()
 
@@ -373,7 +379,223 @@ class RankingSessionListView(generics.ListAPIView):
 
 class CandidateRankingDetailView(generics.RetrieveAPIView):
     """
-    Get detailed information about a specific ranking.
+    Get detailed ranking info including scoring_summary (recruiter only).
     """
     serializer_class = CandidateRankingSerializer
     queryset = CandidateRanking.objects.all()
+    permission_classes = [IsAuthenticated, IsRecruiter]
+
+
+# ---------------------------------------------------------------------------
+# Accept / Reject email endpoints
+# ---------------------------------------------------------------------------
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsRecruiter])
+def send_accept_email(request, ranking_id):
+    """
+    Recruiter accepts a candidate — sends personalised acceptance email via SMTP.
+
+    Body (optional):
+      extra_message (str): additional note to include in the email
+    """
+    ranking = get_object_or_404(CandidateRanking, id=ranking_id)
+    candidate = ranking.candidate
+    job = ranking.session.job
+    actor = get_api_actor(request)
+
+    candidate_email = candidate.email
+    if not candidate_email or "@no-email" in candidate_email:
+        # Try user account email
+        if candidate.user and candidate.user.email:
+            candidate_email = candidate.user.email
+        else:
+            return Response(
+                {"error": "Candidate has no valid email address. Cannot send acceptance email."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    extra_message = (request.data.get("extra_message") or "").strip()
+
+    mb = ranking.match_breakdown if isinstance(ranking.match_breakdown, dict) else {}
+    scoring_summary = mb.get("scoring_summary")
+    company_name = getattr(job, "company", "") or "Our Company"
+    recruiter_name = (
+        f"{actor.first_name} {actor.last_name}".strip() or actor.username
+    )
+
+    email_service = EmailService()
+    sent = email_service.send_accept_email(
+        candidate_email=candidate_email,
+        candidate_name=candidate.name or "Candidate",
+        job_title=job.title,
+        company_name=company_name,
+        recruiter_name=recruiter_name,
+        ai_score=ranking.ai_score,
+        matched_skills=list(ranking.matched_skills or []),
+        scoring_summary=scoring_summary,
+        extra_message=extra_message,
+    )
+
+    if not sent:
+        return Response(
+            {"error": "Failed to send email. Check SMTP configuration in .env."},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    # Update ranking
+    ranking.human_decision = 'accepted'
+    ranking.email_sent = True
+    ranking.email_sent_at = timezone.now()
+    ranking.email_type = 'accept'
+    if not ranking.reviewed_by:
+        ranking.reviewed_by = actor
+        ranking.reviewed_at = timezone.now()
+    ranking.save()
+
+    AuditLog.log_human_override(
+        user=actor,
+        ranking=ranking,
+        decision='accepted',
+        metadata={
+            "email_sent_to": candidate_email,
+            "ai_score": ranking.ai_score,
+            "extra_message": extra_message,
+        },
+        ip_address=request.META.get('REMOTE_ADDR'),
+    )
+
+    return Response(
+        {
+            "message": f"Acceptance email sent to {candidate_email}.",
+            "candidate": candidate.name,
+            "job": job.title,
+            "email_sent_to": candidate_email,
+            "ranking": CandidateRankingSerializer(ranking).data,
+        },
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsRecruiter])
+def send_reject_email(request, ranking_id):
+    """
+    Recruiter rejects a candidate — sends detailed rejection email via SMTP.
+
+    Body:
+      rejection_reasons (list[dict]): specific reasons — each with:
+        - dimension (str)
+        - score (float)
+        - reason (str)
+        - missing (list[str], optional)
+      extra_message (str, optional): additional note to include
+    """
+    ranking = get_object_or_404(CandidateRanking, id=ranking_id)
+    candidate = ranking.candidate
+    job = ranking.session.job
+    actor = get_api_actor(request)
+
+    candidate_email = candidate.email
+    if not candidate_email or "@no-email" in candidate_email:
+        if candidate.user and candidate.user.email:
+            candidate_email = candidate.user.email
+        else:
+            return Response(
+                {"error": "Candidate has no valid email address. Cannot send rejection email."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    # Build rejection reasons from request or auto-generate from match_breakdown
+    rejection_reasons = request.data.get("rejection_reasons") or []
+    extra_message = (request.data.get("extra_message") or "").strip()
+
+    mb = ranking.match_breakdown if isinstance(ranking.match_breakdown, dict) else {}
+    scoring_summary = mb.get("scoring_summary")
+
+    # If no reasons provided, auto-generate from weak/average dimensions
+    if not rejection_reasons and scoring_summary:
+        for item in (scoring_summary.get("weak") or []):
+            rejection_reasons.append({
+                "dimension": item.get("label", item.get("id", "Area")),
+                "score": item.get("score", 0),
+                "reason": item.get("reason", ""),
+                "missing": item.get("missing", []),
+            })
+        for item in (scoring_summary.get("average") or []):
+            rejection_reasons.append({
+                "dimension": item.get("label", item.get("id", "Area")),
+                "score": item.get("score", 0),
+                "reason": item.get("reason", ""),
+                "missing": item.get("missing", []),
+            })
+
+    if not rejection_reasons:
+        # Fallback: use missing_skills and explanation
+        rejection_reasons = [
+            {
+                "dimension": "Overall Match",
+                "score": ranking.ai_score,
+                "reason": (ranking.explanation or "Profile did not meet current requirements.")[:300],
+                "missing": list(ranking.missing_skills or [])[:8],
+            }
+        ]
+
+    company_name = getattr(job, "company", "") or "Our Company"
+    recruiter_name = (
+        f"{actor.first_name} {actor.last_name}".strip() or actor.username
+    )
+
+    email_service = EmailService()
+    sent = email_service.send_reject_email(
+        candidate_email=candidate_email,
+        candidate_name=candidate.name or "Candidate",
+        job_title=job.title,
+        company_name=company_name,
+        recruiter_name=recruiter_name,
+        ai_score=ranking.ai_score,
+        rejection_reasons=rejection_reasons,
+        scoring_summary=scoring_summary,
+        extra_message=extra_message,
+    )
+
+    if not sent:
+        return Response(
+            {"error": "Failed to send email. Check SMTP configuration in .env."},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    # Update ranking
+    ranking.human_decision = 'rejected'
+    ranking.rejection_reasons = rejection_reasons
+    ranking.email_sent = True
+    ranking.email_sent_at = timezone.now()
+    ranking.email_type = 'reject'
+    if not ranking.reviewed_by:
+        ranking.reviewed_by = actor
+        ranking.reviewed_at = timezone.now()
+    ranking.save()
+
+    AuditLog.log_human_override(
+        user=actor,
+        ranking=ranking,
+        decision='rejected',
+        metadata={
+            "email_sent_to": candidate_email,
+            "ai_score": ranking.ai_score,
+            "rejection_reasons_count": len(rejection_reasons),
+        },
+        ip_address=request.META.get('REMOTE_ADDR'),
+    )
+
+    return Response(
+        {
+            "message": f"Rejection email sent to {candidate_email}.",
+            "candidate": candidate.name,
+            "job": job.title,
+            "email_sent_to": candidate_email,
+            "rejection_reasons_sent": rejection_reasons,
+            "ranking": CandidateRankingSerializer(ranking).data,
+        },
+        status=status.HTTP_200_OK,
+    )

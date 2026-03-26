@@ -9,8 +9,10 @@ from .models import Candidate
 
 class CandidateUploadSerializer(serializers.ModelSerializer):
     """
-    Upload CV file only (multipart). Optional name/email/phone — usually omitted;
-    profile is filled by OpenAI extraction from file text.
+    Upload CV file (multipart).
+    For candidate users: first_name, last_name, email, github are pre-filled from
+    their user profile in the view — they can also override here.
+    Recruiters can upload on behalf of a candidate and fill info manually.
     """
 
     file = serializers.FileField(write_only=True, required=False)
@@ -24,6 +26,7 @@ class CandidateUploadSerializer(serializers.ModelSerializer):
             "name",
             "email",
             "phone",
+            "github",
             "cv_file",
             "file",
             "cv",
@@ -35,6 +38,7 @@ class CandidateUploadSerializer(serializers.ModelSerializer):
             "name": {"required": False, "allow_blank": True},
             "email": {"required": False, "allow_blank": True},
             "phone": {"required": False, "allow_blank": True},
+            "github": {"required": False, "allow_blank": True},
         }
 
     def validate_cv_file(self, value):
@@ -70,7 +74,6 @@ class CandidateUploadSerializer(serializers.ModelSerializer):
         attrs["cv_file"] = cv_file
 
         data = getattr(self, "initial_data", None) or {}
-        # Optional manual overrides (rare); default empty — filled after OpenAI parse
         name = (attrs.get("name") or "").strip()
         if not name and hasattr(data, "get"):
             name = (
@@ -86,6 +89,9 @@ class CandidateUploadSerializer(serializers.ModelSerializer):
 
         phone = (attrs.get("phone") or "").strip()
         attrs["phone"] = phone[:32] if phone else ""
+
+        github = (attrs.get("github") or "").strip()
+        attrs["github"] = github[:300] if github else ""
 
         attrs.pop("file", None)
         attrs.pop("cv", None)
@@ -103,7 +109,12 @@ class CandidateSerializer(serializers.ModelSerializer):
     has_embedding = serializers.ReadOnlyField()
     uploaded_by_username = serializers.CharField(
         source='uploaded_by.username',
-        read_only=True
+        read_only=True,
+    )
+    candidate_user_id = serializers.IntegerField(
+        source='user.id',
+        read_only=True,
+        allow_null=True,
     )
     job_match_score = serializers.SerializerMethodField()
     job_match_rank = serializers.SerializerMethodField()
@@ -120,16 +131,17 @@ class CandidateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Candidate
         fields = [
-            'id', 'name', 'email', 'phone', 'cv_file', 'file_extension',
+            'id', 'name', 'email', 'phone', 'github', 'cv_file', 'file_extension',
             'skills', 'experience_years', 'education', 'professional_summary',
             'fairness_scan_json', 'has_embedding',
             'ai_profile_json',
-            'uploaded_by_username', 'created_at', 'updated_at', 'is_active',
+            'uploaded_by_username', 'candidate_user_id',
+            'created_at', 'updated_at', 'is_active',
             'job_match_score', 'job_match_rank', 'target_job',
         ]
         read_only_fields = [
             'id', 'extracted_text', 'embedding_vector',
-            'created_at', 'updated_at'
+            'created_at', 'updated_at',
         ]
 
 
@@ -151,6 +163,7 @@ class CandidateUpdateSerializer(serializers.ModelSerializer):
             'name',
             'email',
             'phone',
+            'github',
             'skills',
             'experience_years',
             'education',

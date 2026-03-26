@@ -137,10 +137,9 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Custom User Model
 AUTH_USER_MODEL = 'users.User'
 
-# API auth: default open for demos / open-source frontends (no VITE_API_TOKEN).
-# Set API_REQUIRE_AUTH=true in production to require Token (or Session) on all endpoints
-# except those explicitly marked AllowAny (register/login).
-_API_REQUIRE_AUTH = os.getenv('API_REQUIRE_AUTH', 'false').lower() in ('1', 'true', 'yes')
+# API auth: default TRUE — login required.
+# register/login endpoints are always AllowAny.
+_API_REQUIRE_AUTH = os.getenv('API_REQUIRE_AUTH', 'true').lower() in ('1', 'true', 'yes')
 
 # Django REST Framework
 REST_FRAMEWORK = {
@@ -200,6 +199,22 @@ CV_EXTRACT_PROVIDER = os.getenv('CV_EXTRACT_PROVIDER', 'auto')
 # File Upload Settings
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10MB
 DATA_UPLOAD_MAX_MEMORY_SIZE = FILE_UPLOAD_MAX_MEMORY_SIZE
+
+# Email (SMTP) Configuration
+# Set EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend in production
+EMAIL_BACKEND = os.getenv(
+    'EMAIL_BACKEND',
+    'django.core.mail.backends.console.EmailBackend'  # prints to console in dev
+)
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'smtp.gmail.com')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
+EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'true').lower() in ('1', 'true', 'yes')
+EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', 'false').lower() in ('1', 'true', 'yes')
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'noreply@cv-ai.local')
+# Optional: absolute URL of the frontend (included in emails)
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
 # Logging Configuration
 LOGGING = {

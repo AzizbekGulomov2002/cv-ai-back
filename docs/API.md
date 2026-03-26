@@ -1,330 +1,597 @@
-# AI CV System — REST API (bitta hujjat)
+# AI CV System — Full API Documentation
 
-**Base URL (lokal):** `http://127.0.0.1:8000`  
-**Prefix:** `/api/`
-
-Sukut: `API_REQUIRE_AUTH=false` — ko‘p endpointlar token talab qilmaydi. Production da `API_REQUIRE_AUTH=true`.
-
-**English documentation:** project overview and scoring → [`../README.md`](../README.md); setup & operations → [`docs.md`](docs.md).
+Base URL: `http://localhost:8000`  
+All endpoints: `Content-Type: application/json` unless file upload (multipart).  
+Auth header: `Authorization: Token <token>`
 
 ---
 
-## 1. Auth (`/api/auth/`)
+## 1. Authentication (`/api/auth/`)
 
-| Method | Path | Tavsif |
-|--------|------|--------|
-| POST | `/api/auth/register/` | Ro‘yxatdan o‘tish |
-| POST | `/api/auth/login/` | Kirish (token qaytaradi) |
-| POST | `/api/auth/logout/` | Chiqish |
-| GET | `/api/auth/profile/` | Profil |
-| PATCH/PUT | `/api/auth/profile/update/` | Yangilash |
+### Roles
+| Role | Access |
+|---|---|
+| `recruiter` | Full system access — ranking, accept/reject, all candidates |
+| `candidate` | Upload own CV, view own profile, view own ranking history |
 
 ---
 
-## 2. Jobs — vakansiyalar (`/api/jobs/`)
+### `POST /api/auth/register/`
+Register a new user. Open (no auth required).
 
-| Method | Path | Tavsif |
-|--------|------|--------|
-| GET | `/api/jobs/` | Aktiv vakansiyalar. Query: `search`, `job_type`, `level`, `location` |
-| **GET** | **`/api/jobs/for-upload/`** | **CV yuklash uchun tanlash ro‘yxati** + `ui_prompt` (uz/en) + `api` qisqa ko‘rsatma |
-| POST | `/api/jobs/create/` | Yangi job |
-| GET | `/api/jobs/<id>/` | Batafsil |
-| PATCH/PUT | `/api/jobs/<id>/update/` | Yangilash (description o‘zgarsa embedding qayta hisoblanadi) |
-| DELETE | `/api/jobs/<id>/delete/` | Deaktivlash |
+**Request body:**
+```json
+{
+  "username": "john_doe",
+  "email": "john@example.com",
+  "password": "SecurePass123",
+  "password_confirm": "SecurePass123",
+  "role": "recruiter",          // "recruiter" | "candidate"
+  "first_name": "John",
+  "last_name": "Doe",
+  "company": "Acme Corp",       // recruiters
+  "phone": "+1234567890",
+  "github": "https://github.com/jdoe",  // candidates
+  "image": <file>               // optional profile photo
+}
+```
 
-**Ko‘p vakansiya + ko‘p nomzod oqimi:** avval `GET /api/jobs/for-upload/` yoki `GET /api/jobs/` dan `id` oling → har bir CV yuklashda shu `job_id` ni yuboring → nomzod `target_job` ga bog‘lanadi → ranking da `only_target_job_candidates: true` bilan faqat shu vakansiyaga yozilganlar saralanadi.
+**Response 201:**
+```json
+{
+  "message": "User registered successfully",
+  "user": { "id": 1, "username": "john_doe", "email": "john@example.com", "role": "recruiter" },
+  "token": "abc123token..."
+}
+```
 
 ---
 
-## 3. Candidates — nomzodlar (`/api/candidates/`)
+### `POST /api/auth/login/`
+Login with username and password. Open.
 
-### 3.1 CV yuklash
+**Request:**
+```json
+{ "username": "john_doe", "password": "SecurePass123" }
+```
 
-**POST** `/api/candidates/upload/`  
-`Content-Type: multipart/form-data`
+**Response 200:**
+```json
+{
+  "message": "Login successful",
+  "user": {
+    "id": 1,
+    "username": "john_doe",
+    "email": "john@example.com",
+    "role": "recruiter",
+    "company": "Acme Corp"
+  },
+  "token": "abc123token..."
+}
+```
 
-| Maydon | Majburiy | Tavsif |
-|--------|----------|--------|
-| `file` / `cv` / `cv_file` | ha | PDF yoki DOCX |
-| `job_id` | **tavsiya** | Tanlangan vakansiya: moslik hisobi + DB da `target_job` bog‘lanishi |
-| `name`, `email`, `phone` | yo‘q | Qo‘lda override |
+---
 
-Query alternativa: `POST /api/candidates/upload/?job_id=3`
+### `POST /api/auth/logout/`
+Logout (invalidates token). Auth required.
 
-**Natija (201):** to‘liq `candidate` (ichida `target_job`), ixtiyoriy `job_evaluation` / `score` / `matching.skill_match` va hokazo — job talablari **o‘sha paytdagi** `Job` yozuvidan olinadi (keyin job o‘zgarsa, qayta upload yoki qayta ranking).
+---
 
-### 3.2 Ro‘yxat
+### `GET /api/auth/profile/`
+Get current user profile. Auth required.
 
-**GET** `/api/candidates/`
+**Response:**
+```json
+{
+  "id": 1,
+  "username": "jane_smith",
+  "email": "jane@example.com",
+  "first_name": "Jane",
+  "last_name": "Smith",
+  "role": "candidate",
+  "company": "",
+  "phone": "",
+  "image": "/media/user_images/1/profile.jpg",
+  "github": "https://github.com/janesmith",
+  "date_joined": "2026-03-26T10:00:00Z",
+  "last_login": "2026-03-26T12:00:00Z"
+}
+```
 
-| Query | Tavsif |
-|-------|--------|
-| `page`, `page_size` | Sahifalash (**sukut page_size=10**) |
-| `search` | ism/email |
-| `min_experience` | minimal tajriba yili |
-| **`target_job_id`** | **Faqat shu vakansiyaga biriktirilgan** nomzodlar |
-| **`job_id`** | Shu job bo‘yicha **oxirgi ranking sessiyasi** `ai_score` bo‘yicha tartib (yuqoridan pastga). Meta: `ranking_session_applied`, `ranking_session_id` |
-| `job_id` + ro‘yxat | Har bir element: `job_match_score`, `job_match_rank` (sessiyada bo‘lsa) |
+---
 
-### 3.3 Batafsil nomzod
+### `PUT/PATCH /api/auth/profile/update/`
+Update current user profile. Auth required.
 
-**GET** `/api/candidates/<id>/`
+**Fields:** `email`, `first_name`, `last_name`, `company`, `phone`, `image`, `github`
 
-| Query | Tavsif |
-|-------|--------|
-| `job_id` | Live **match_dimensions_live** shu job bo‘yicha hisoblanadi (talablar o‘zgarsa — yangilanadi) |
-| `no_live_dimensions=1` | Live qayta hisoblamaslik (faqat DB dagi `ranking_history`) |
+---
 
-**Javobga qo‘shimcha maydonlar:**
+## 2. Candidates (`/api/candidates/`)
 
-- **`ranking_history`** — barcha saqlangan `CandidateRanking` yozuvlari (oxirgi birinchi): `session_id`, `job`, `ai_score`, `ai_rank`, `human_decision`, **`dimensions`**, **`match_breakdown`**, `composite_score_stored`, qisqa `explanation_preview`.
-- **`match_dimensions_live`** — hozirgi job (query yoki `target_job`) bo‘yicha **yangi hisoblangan** `dimensions`, `weights`, `composite_score`, `matched_skills` / `missing_skills`.
-- Agar `target_job` bo‘lsa va oxirgi sessiyada qatnashgan bo‘lsa: **`job_match_score`**, **`job_match_rank`**, **`latest_ranking_session_for_target_job`**.
+### Access Control
+| Action | Recruiter | Candidate |
+|---|---|---|
+| Upload CV | ✅ (for any) | ✅ (own profile only, 1 per account) |
+| List candidates | ✅ All | ✅ Own only |
+| View detail | ✅ Any | ✅ Own only |
+| Update | ✅ Any | ✅ Own only |
+| Delete/deactivate | ✅ | ❌ |
 
-### 3.4 Boshqa
+---
 
-| Method | Path |
-|--------|------|
-| PATCH/PUT | `/api/candidates/<id>/update/` |
-| DELETE | `/api/candidates/<id>/delete/` (soft deactivate) |
+### `POST /api/candidates/upload/`
+Upload a CV file. **Auth required.**
+
+- **Candidate role**: `first_name`, `last_name`, `email`, `github` auto-filled from user account.  
+  Only 1 active profile allowed per candidate account.
+- **Recruiter role**: uploads on behalf of candidate; fills info manually.
+
+**Multipart form fields:**
+| Field | Required | Description |
+|---|---|---|
+| `cv_file` | ✅ | PDF or DOCX, max 10MB |
+| `job_id` | Optional | Link to a job for instant scoring |
+| `name` | Optional | Overrides user account name |
+| `email` | Optional | Overrides user account email |
+| `phone` | Optional | Phone number |
+| `github` | Optional | GitHub profile URL |
+
+**Response 201 — with job_id (full scoring):**
+```json
+{
+  "message": "CV processed successfully (file pipeline)",
+  "candidate": { "id": 5, "name": "Jane Smith", "email": "jane@example.com", "github": "https://github.com/janesmith", ... },
+  "score": 74.5,
+  "ranking": {
+    "score": 74.5,
+    "rank_label": "Average Match",
+    "tier": "average"
+  },
+  "matching": {
+    "matched_skills": ["Python", "Django"],
+    "missing_skills": ["React", "Docker"]
+  },
+  "explanation": "Overall match index: 74.5/100...",
+  "scoring_summary": {
+    "composite_score": 74.5,
+    "overall_tier": "average",
+    "overall_label": "Average Match",
+    "strong": [
+      {
+        "id": "experience_fit",
+        "label": "Experience vs job minimum",
+        "score": 100.0,
+        "weight_pct": 18.0,
+        "weighted_contribution": 18.0,
+        "reason": "Experience fit: candidate 5 y ≥ required 3 y."
+      }
+    ],
+    "average": [
+      {
+        "id": "required_skills",
+        "label": "Required skills coverage",
+        "score": 66.7,
+        "weight_pct": 28.0,
+        "weighted_contribution": 18.68,
+        "reason": "Required skills: 2/3 explicit matches (Python, Django). Missing required: React …",
+        "matched": ["Python", "Django"],
+        "missing": ["React"]
+      }
+    ],
+    "weak": [
+      {
+        "id": "preferred_skills",
+        "label": "Preferred skills",
+        "score": 0.0,
+        "weight_pct": 12.0,
+        "weighted_contribution": 0.0,
+        "reason": "Preferred skills: 0/2 matched (none)."
+      }
+    ],
+    "counts": { "strong": 1, "average": 3, "weak": 1 },
+    "summary_text": "Overall composite score: 74.5/100. Strong areas (1): Experience vs job minimum. ..."
+  }
+}
+```
+
+---
+
+### `GET /api/candidates/`
+List candidates. Auth required.
+
+- Recruiter: all active candidates
+- Candidate: only own profile
+
+**Query params:**
+- `search` — name or email search
+- `min_experience` — minimum years
+- `target_job_id` — filter by job application
+- `job_id` — sort by AI score from latest ranking session
+- `page`, `page_size` — pagination (default 10)
+
+---
+
+### `GET /api/candidates/<id>/`
+Candidate detail with full ranking history and scoring_summary. Auth required.
+
+**Query params:**
+- `job_id` — live match dimensions for a specific job
+- `no_live_dimensions=1` — skip live recomputation
+
+**Response includes:**
+- `ranking_history[]` — all past ranking sessions with `scoring_summary` per entry
+- `match_dimensions_live` — live computed dimensions
+- `scoring_summary` — from latest target_job ranking
+
+---
+
+### `PATCH /api/candidates/<id>/update/`
+Update candidate. Auth required. Candidate can only update own.
+
+---
+
+### `DELETE /api/candidates/<id>/delete/`
+Deactivate candidate. Recruiter only.
+
+---
+
+## 3. Jobs (`/api/jobs/`)
+
+### `GET /api/jobs/`
+List all active jobs. Auth required.
+
+### `GET /api/jobs/for-upload/`
+Job list for CV upload dropdown (id + title only).
+
+### `POST /api/jobs/create/`
+Create a job. Recruiter only.
+
+**Body:**
+```json
+{
+  "title": "Senior Backend Developer",
+  "company": "Acme Corp",
+  "description": "...",
+  "requirements": "...",
+  "required_skills": ["Python", "Django", "PostgreSQL"],
+  "preferred_skills": ["Docker", "AWS", "Redis"],
+  "min_experience": 3,
+  "salary_range": "80000-120000"
+}
+```
+
+### `GET /api/jobs/<id>/`
+Job detail.
+
+### `PUT/PATCH /api/jobs/<id>/update/`
+Update job. Recruiter only.
+
+### `DELETE /api/jobs/<id>/delete/`
+Delete job. Recruiter only.
 
 ---
 
 ## 4. Ranking (`/api/ranking/`)
 
-### 4.1 Ishga tushirish
+> All ranking endpoints require **Recruiter** role (except `preview` which requires auth).
 
-**POST** `/api/ranking/run/`
+---
 
+### `POST /api/ranking/run/`
+Run AI ranking for a job. Recruiter only.
+
+**Body:**
 ```json
 {
   "job_id": 1,
-  "candidate_ids": [2, 3, 5],
-  "notes": "Q1 saralash",
-  "only_target_job_candidates": false
+  "candidate_ids": [1, 2, 3],   // optional; defaults to all active candidates
+  "only_target_job_candidates": true,  // only candidates who applied for this job
+  "notes": "Q1 2026 hiring batch"
 }
 ```
 
-| Maydon | Tavsif |
-|--------|--------|
-| `job_id` | majburiy |
-| `candidate_ids` | ixtiyoriy; bo‘lmasa — barcha aktiv nomzodlar |
-| **`only_target_job_candidates`** | **`true`** va `candidate_ids` bo‘lmasa → faqat `target_job_id == job_id` nomzodlar (bir vakansiyaga yozilganlar) |
+**Response:**
+```json
+{
+  "message": "Ranking completed successfully",
+  "session": { "id": 5, "job": 1, "job_title": "Senior Backend Dev", ... },
+  "rankings_count": 12,
+  "top_candidates": [
+    {
+      "id": 8,
+      "candidate": { "id": 3, "name": "Alice Johnson", ... },
+      "ai_score": 87.4,
+      "ai_rank": 1,
+      "matched_skills": ["Python", "Django", "PostgreSQL"],
+      "missing_skills": ["Redis"],
+      "explanation": "Overall match index: 87.4/100...",
+      "scoring_summary": {
+        "composite_score": 87.4,
+        "overall_tier": "strong",
+        "overall_label": "Strong Match",
+        "strong": [...],
+        "average": [...],
+        "weak": [...],
+        "summary_text": "..."
+      },
+      "human_decision": "pending",
+      "email_sent": false
+    }
+  ]
+}
+```
 
-### 4.2 Job bo‘yicha natijalar (filtrlar)
+---
 
-**GET** `/api/ranking/<job_id>/`
+### `GET /api/ranking/<job_id>/`
+Get rankings for a job. Recruiter only.
 
-| Query | Tavsif |
-|-------|--------|
-| `session_id` | Aniq sessiya (aks holda oxirgi) |
-| `min_score` | Minimal `ai_score` |
-| `human_decision` | `pending`, `accepted`, `rejected`, `shortlisted` |
-| `ordering` | `rank` (sukut) yoki `-score` / `score_desc` |
+**Query params:**
+- `session_id` — specific session (defaults to latest)
+- `min_score` — filter by minimum ai_score
+- `human_decision` — filter: `pending | accepted | rejected | shortlisted`
+- `ordering` — `rank` (default) or `-score`
 
-Javobda `filters_applied` va `rankings` (tushuntirish, `match_breakdown`, …).
+**Response includes full `scoring_summary` per ranking with strong/average/weak breakdown.**
 
-### 4.3 Boshqa ranking endpointlar
+---
 
-| Method | Path | Tavsif |
-|--------|------|--------|
-| POST | `/api/ranking/preview/` | `job_id`, `candidate_id` — sessiyasiz moslik |
-| POST | `/api/ranking/<ranking_id>/override/` | HR qarori: `human_decision`, `human_score`, `human_feedback` |
-| GET | `/api/ranking/analytics/` | `job_id`, `days` |
-| GET | `/api/ranking/sessions/` | Sessiyalar. Query: **`job_id`**, **`min_candidates`**, **`ordering`** (`-created_at` / `created_at`) |
-| GET | `/api/ranking/details/<pk>/` | Bitta `CandidateRanking` |
+### `GET /api/ranking/details/<pk>/`
+Detailed single ranking with full `scoring_summary`. Recruiter only.
+
+**scoring_summary structure:**
+```json
+{
+  "composite_score": 87.4,
+  "overall_tier": "strong",        // "strong" | "average" | "weak"
+  "overall_label": "Strong Match",
+  "strong": [                      // score >= 75
+    {
+      "id": "semantic_alignment",
+      "label": "Semantic alignment (job ↔ CV text)",
+      "score": 82.0,
+      "weight_pct": 32,
+      "weighted_contribution": 26.24,
+      "reason": "Semantic similarity between job text and CV embedding text is 82.0/100 ..."
+    }
+  ],
+  "average": [ ... ],              // 50 <= score < 75
+  "weak": [ ... ],                 // score < 50
+  "counts": { "strong": 3, "average": 1, "weak": 1 },
+  "summary_text": "Overall composite score: 87.4/100. Strong areas (3): ..."
+}
+```
+
+---
+
+### `POST /api/ranking/<ranking_id>/override/`
+Human override of AI ranking. Recruiter only.
+
+**Body:**
+```json
+{
+  "human_decision": "accepted",     // pending | accepted | rejected | shortlisted
+  "human_score": 92.0,              // optional override score (0-100)
+  "human_feedback": "Excellent cultural fit despite missing Redis experience."
+}
+```
+
+---
+
+### `POST /api/ranking/<ranking_id>/accept/`
+Accept a candidate and send personalised acceptance email via SMTP. **Recruiter only.**
+
+Auto-generates email from:
+- Candidate's matched skills
+- Strong scoring dimensions with exact scores and reasons
+
+**Body (optional):**
+```json
+{
+  "extra_message": "Please expect a call from our HR team on Monday."
+}
+```
+
+**Response 200:**
+```json
+{
+  "message": "Acceptance email sent to jane@example.com.",
+  "candidate": "Jane Smith",
+  "job": "Senior Backend Developer",
+  "email_sent_to": "jane@example.com",
+  "ranking": { ..., "email_sent": true, "email_type": "accept", "human_decision": "accepted" }
+}
+```
+
+**Error 502** if SMTP is not configured or sending fails.
+
+---
+
+### `POST /api/ranking/<ranking_id>/reject/`
+Reject a candidate with specific reasons — sends detailed rejection email. **Recruiter only.**
+
+If `rejection_reasons` not provided, auto-generated from weak/average scoring dimensions.
+
+**Body:**
+```json
+{
+  "rejection_reasons": [
+    {
+      "dimension": "Required skills coverage",
+      "score": 33.3,
+      "reason": "Required skills: 1/3 explicit matches (Python). Missing required: Django, React.",
+      "missing": ["Django", "React"]
+    },
+    {
+      "dimension": "Experience vs job minimum",
+      "score": 46.0,
+      "reason": "Experience gap: candidate 1 y vs minimum 3 y (2 year shortfall)."
+    }
+  ],
+  "extra_message": "We encourage you to gain more experience with Django and React."
+}
+```
+
+**Response 200:**
+```json
+{
+  "message": "Rejection email sent to candidate@example.com.",
+  "candidate": "Bob Jones",
+  "job": "Senior Backend Developer",
+  "email_sent_to": "candidate@example.com",
+  "rejection_reasons_sent": [...],
+  "ranking": { ..., "email_sent": true, "email_type": "reject", "human_decision": "rejected" }
+}
+```
+
+---
+
+### `POST /api/ranking/preview/`
+Preview match score for a single job+candidate pair without saving a session. Auth required.
+
+**Body:**
+```json
+{ "job_id": 1, "candidate_id": 3 }
+```
+
+---
+
+### `GET /api/ranking/analytics/`
+Ranking analytics. Recruiter only.
+
+**Query params:** `job_id`, `days` (default 30)
+
+---
+
+### `GET /api/ranking/sessions/`
+List ranking sessions. Recruiter only.
+
+**Query params:** `job_id`, `min_candidates`, `ordering`
 
 ---
 
 ## 5. Audit (`/api/audit/`)
 
-| Method | Path | Query (ro‘yxat) |
-|--------|------|-----------------|
-| GET | `/api/audit/` | `action_type`, `risk_level`, `user_id`, `days`, `search` |
-| GET | `/api/audit/statistics/` | `days` |
+### `GET /api/audit/`
+List audit logs. Recruiter only.
+
+### `GET /api/audit/statistics/`
+Audit statistics. Recruiter only.
 
 ---
 
-## 6. Multi-job workflow (qisqa)
+## 6. Environment Configuration
 
-1. **Vakansiyalar:** `GET /api/jobs/for-upload/` — dropdown uchun.  
-2. **CV:** har nomzod uchun `POST .../candidates/upload/` + **FormData** `job_id=<tanlangan>`.  
-3. **Saralash (faqat shu positsiyaga yozilganlar):**  
-   `POST /api/ranking/run/` body: `{ "job_id": N, "only_target_job_candidates": true }`  
-4. **Ko‘rish:** `GET /api/ranking/N/?ordering=rank&min_score=50`  
-5. **Ro‘yxat (prioritet):** `GET /api/candidates/?job_id=N&page=1`
+Copy `.env.example` to `.env` and configure:
+
+```env
+# Django
+SECRET_KEY=your_secret_key_here
+DEBUG=True
+API_REQUIRE_AUTH=true
+
+# AI Keys
+OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=...         # optional fallback
+
+# SMTP Email (for accept/reject notifications)
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=true
+EMAIL_HOST_USER=your_email@gmail.com
+EMAIL_HOST_PASSWORD=your_app_password
+
+# For Gmail: create App Password at Google Account → Security → App Passwords
+# (only available if 2-Step Verification is enabled)
+
+DEFAULT_FROM_EMAIL=AI CV System <your_email@gmail.com>
+FRONTEND_URL=http://localhost:3000
+```
+
+**For local development** (email prints to console instead of sending):
+```env
+EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
+```
 
 ---
 
-## 7. Cheklovlar
+## 7. Scoring Logic
 
-- AI ball **tavsiya**; yakuniy qaror HR (`override`).  
-- Job `required_skills` / `description` o‘zgargach, aniq natija uchun ranking ni qayta ishlatish yoki CV ni qayta baholash kerak.  
-- `rank` upload javobida faqat **mavjud ranking sessiyasida** bo‘lsa to‘liq.
+### How scores are computed
+
+5 weighted dimensions, total weight = 1.0:
+
+| Dimension | Weight | How calculated |
+|---|---|---|
+| Semantic alignment | 32% | Cosine similarity between CV embedding and job description embedding |
+| Required skills | 28% | `matched_required / total_required * 100` |
+| Preferred skills | 12% | `matched_preferred / total_preferred * 100` |
+| Experience fit | 18% | 100 if meets minimum; penalized by 18pts per year shortfall |
+| Education signals | 10% | Keyword match between education text and job description |
+
+### Score tier classification
+
+| Score | Tier | Label |
+|---|---|---|
+| ≥ 75 | `strong` | Strong Match |
+| 50–74 | `average` | Average Match |
+| < 50 | `weak` | Weak Match |
+
+### Why summary_text shows specific reasons
+
+Each dimension entry in `scoring_summary` includes:
+- `score` — exact numeric score (0–100)
+- `weight_pct` — how much this dimension counts toward total
+- `weighted_contribution` — actual points contributed
+- `reason` — human-readable explanation of why this score was given
+- `matched` / `missing` — exact skill lists (for skills dimensions)
 
 ---
 
-## 8. Namuna vakansiyalar (rollar bo‘yicha)
+## 8. Frontend Integration Guide
 
-Quyidagilar **`POST /api/jobs/create/`** uchun tayyor JSON (maydonlarni o‘z kompaniyangizga moslang).  
-`application_deadline` ixtiyoriy — `null` yoki ISO8601, masalan `"2026-12-31T23:59:59Z"`.
-
-### 8.1 Frontend Engineer
-
-```json
-{
-  "title": "Senior Frontend Engineer",
-  "company": "Nova Labs",
-  "location": "Remote (UTC+3–+6) / Tashkent hub",
-  "description": "We build a design-system-driven SaaS dashboard used by thousands of operators. You will own complex UI flows: tables with virtualization, filters, accessibility (WCAG 2.1 AA), and performance budgets. You work with product designers and backend engineers; code reviews and RFCs are part of the culture. We ship in two-week cycles; feature flags and gradual rollouts are standard.",
-  "requirements": "- 4+ years shipping production web UIs.\n- Strong TypeScript and React (hooks, state patterns, error boundaries).\n- CSS at scale: design tokens, responsive layout, prefers reduced-motion awareness.\n- Experience with REST or GraphQL clients, optimistic updates, and loading/error UX.\n- Testing: Jest/React Testing Library or Vitest; basic E2E awareness (Playwright/Cypress).\n- English B2+ for docs and async communication.\n- Portfolio or links to shipped products appreciated.",
-  "job_type": "full_time",
-  "level": "senior",
-  "required_skills": [
-    "TypeScript",
-    "React",
-    "HTML/CSS",
-    "REST API",
-    "Git",
-    "Responsive design",
-    "Accessibility",
-    "Jest or Vitest"
-  ],
-  "preferred_skills": [
-    "Next.js",
-    "TanStack Query",
-    "Zustand or Redux Toolkit",
-    "Storybook",
-    "Vite",
-    "Figma handoff",
-    "Web performance",
-    "i18n"
-  ],
-  "min_experience": 4,
-  "max_experience": 12,
-  "salary_min": "3500.00",
-  "salary_max": "5200.00",
-  "currency": "USD",
-  "application_deadline": null
-}
+### Login flow
+```
+POST /api/auth/login/ → { token, user: { role } }
+Store token in localStorage/cookie.
+Send on every request: Authorization: Token <token>
 ```
 
-### 8.2 AI Engineer
-
-```json
-{
-  "title": "AI / ML Engineer (LLM & Retrieval)",
-  "company": "Nova Labs",
-  "location": "Hybrid — Tashkent",
-  "description": "You will design and ship LLM-powered features in production: structured extraction from documents, RAG over internal knowledge bases, and safe guardrails. Focus is on engineering—prompting, evaluation harnesses, latency/cost trade-offs, observability—not training foundation models from scratch. You collaborate with backend engineers to expose features via APIs and with compliance on logging and human-in-the-loop patterns.",
-  "requirements": "- 3+ years software engineering; at least 1 year on ML or LLM application code in production.\n- Python; experience calling OpenAI/Anthropic/Google APIs with retries, timeouts, and JSON schema validation.\n- Prompt design, few-shot patterns, and basic eval sets (precision/recall mindset).\n- Vector DB or embeddings workflow (e.g. pgvector, Pinecone, Weaviate) at proof-of-concept or production level.\n- Understanding of PII, prompt injection risks, and refusal/safety basics.\n- English B2+; can read papers and internal RFCs.\n- BS in CS/DS or proven equivalent.",
-  "job_type": "full_time",
-  "level": "mid",
-  "required_skills": [
-    "Python",
-    "LLM APIs",
-    "Prompt engineering",
-    "REST API",
-    "Git",
-    "Embeddings or RAG",
-    "JSON schema validation",
-    "Evaluation mindset"
-  ],
-  "preferred_skills": [
-    "LangChain or LlamaIndex",
-    "OpenAI SDK",
-    "PostgreSQL pgvector",
-    "Docker",
-    "FastAPI",
-    "pytest",
-    "Weights & Biases or MLflow",
-    "EU AI Act awareness"
-  ],
-  "min_experience": 3,
-  "max_experience": 10,
-  "salary_min": "4000.00",
-  "salary_max": "6500.00",
-  "currency": "USD",
-  "application_deadline": null
-}
+### Candidate flow
+```
+1. Register as candidate: POST /api/auth/register/ { role: "candidate", ... }
+2. Upload CV: POST /api/candidates/upload/ with cv_file + job_id
+   → Returns instant score, scoring_summary, matched/missing skills
+3. View own profile: GET /api/candidates/  (shows only own)
 ```
 
-### 8.3 Team Lead (Engineering)
-
-```json
-{
-  "title": "Engineering Team Lead — Platform Squad",
-  "company": "Nova Labs",
-  "location": "Tashkent + remote-friendly",
-  "description": "You lead a cross-functional squad (4–6 engineers) delivering the core API and shared services. You balance delivery with quality: architecture reviews, on-call rotation design, and growing engineers through 1:1s and clear expectations. You still code in critical paths (~30% time). You partner with PM on roadmap sequencing and with HR on hiring loops for your team.",
-  "requirements": "- 5+ years backend or full-stack engineering; 1+ year leading engineers (official or tech-lead capacity).\n- Strong system design: APIs, databases, caching, async jobs, observability.\n- Experience with agile rituals; ability to break epics into incremental releases.\n- Comfortable giving feedback and running performance conversations.\n- English B1+ for standups with distributed peers.\n- Empathy for on-call and incident postmortems without blame culture.",
-  "job_type": "full_time",
-  "level": "lead",
-  "required_skills": [
-    "People leadership",
-    "System design",
-    "REST API",
-    "SQL",
-    "Code review culture",
-    "Agile delivery",
-    "Incident response",
-    "Hiring participation"
-  ],
-  "preferred_skills": [
-    "Python or Go",
-    "Kubernetes basics",
-    "PostgreSQL",
-    "CI/CD",
-    "Architecture RFCs",
-    "Mentoring",
-    "Stakeholder communication"
-  ],
-  "min_experience": 5,
-  "max_experience": 15,
-  "salary_min": "5500.00",
-  "salary_max": "8000.00",
-  "currency": "USD",
-  "application_deadline": null
-}
+### Recruiter flow
+```
+1. Login as recruiter
+2. Create jobs: POST /api/jobs/create/
+3. Run ranking: POST /api/ranking/run/ { job_id, only_target_job_candidates: true }
+4. View rankings: GET /api/ranking/<job_id>/
+   → Each ranking has scoring_summary with strong/average/weak breakdown
+5. Override score: POST /api/ranking/<id>/override/ { human_score, human_decision }
+6. Accept candidate: POST /api/ranking/<id>/accept/  → Email sent automatically
+7. Reject candidate: POST /api/ranking/<id>/reject/ { rejection_reasons }  → Detailed email sent
 ```
 
-### 8.4 Product Manager (PM)
+---
 
-```json
-{
-  "title": "Product Manager — B2B Workflow",
-  "company": "Nova Labs",
-  "location": "Remote / Tashkent",
-  "description": "You own outcomes for a B2B workflow product used by operations teams. You discover problems through interviews and data, write crisp PRDs and user stories, and prioritize ruthlessly against business goals. You work daily with design and engineering; you are the glue between customer pain and shippable increments. Success is measured by adoption, task completion rates, and NPS—not slide decks alone.",
-  "requirements": "- 3+ years as PM (or PO in strong product org) for software products.\n- Evidence of shipping features end-to-end with measurable impact.\n- Strong written communication: user stories, acceptance criteria, release notes.\n- Comfort with analytics tools (Amplitude, Mixpanel, or GA4) and SQL basics.\n- Experience with discovery: user interviews, usability tests, hypothesis validation.\n- English B2+; stakeholder management with sales/customer success occasionally.\n- Structured thinker; can say no with data.",
-  "job_type": "full_time",
-  "level": "mid",
-  "required_skills": [
-    "Product discovery",
-    "Roadmap prioritization",
-    "User stories",
-    "Analytics",
-    "Stakeholder communication",
-    "B2B SaaS context",
-    "English B2+"
-  ],
-  "preferred_skills": [
-    "SQL",
-    "Figma",
-    "Jira or Linear",
-    "A/B testing",
-    "OKRs",
-    "API literacy",
-    "Go-to-market collaboration",
-    "Presentation skills"
-  ],
-  "min_experience": 3,
-  "max_experience": 12,
-  "salary_min": "3800.00",
-  "salary_max": "5800.00",
-  "currency": "USD",
-  "application_deadline": null
-}
+## 9. Running the Project
+
+```bash
+cd ai_cv_system
+python -m venv env
+source env/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env with your keys
+
+python manage.py migrate
+python manage.py createsuperuser
+python manage.py runserver
 ```
-
-**Eslatma:** `salary_*` backend da `Decimal` — qator sifatida yuborish (`"3500.00"`) xavfsiz. Kompaniya nomi, lokatsiya va narxlar — namuna.

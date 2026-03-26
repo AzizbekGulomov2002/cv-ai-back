@@ -1,8 +1,10 @@
-# Minimal — PythonAnywhere / kichik disk uchun (numpy / lokal PDF kutubxonalari yo‘q)
+# Minimal — PythonAnywhere / kichik disk uchun (numpy / lokal PDF kutubxonalari yo'q)
 Django==4.2.7
 djangorestframework==3.14.0
 django-cors-headers==4.3.1
 python-dotenv==1.0.0
+# ImageField support (User.image)
+Pillow>=10.0.0
 # CV fayl: OpenAI Responses + Files; embedding
 openai>=1.70.0,<2
 # CV fayl: Gemini fallback

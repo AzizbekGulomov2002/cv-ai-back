@@ -11,9 +11,11 @@ from django.db.models.functions import Coalesce
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.audit.models import AuditLog
+from apps.users.permissions import IsRecruiter, IsRecruiterOrOwner
 from services.api_actor import get_api_actor
 from services.embedding_service import EmbeddingService
 from services.cv_file_extract import extract_structured_profile_from_cv_file
@@ -68,6 +70,7 @@ def _ranking_history_for_candidate(candidate: Candidate, limit: int = 40):
                 "dimensions": mb.get("dimensions"),
                 "composite_score_stored": mb.get("composite_score"),
                 "match_breakdown": mb,
+                "scoring_summary": mb.get("scoring_summary"),
                 "explanation_preview": (cr.explanation or "")[:500],
             }
         )
@@ -75,7 +78,7 @@ def _ranking_history_for_candidate(candidate: Candidate, limit: int = 40):
 
 
 def _live_match_dimensions_bundle(candidate: Candidate, job: Job) -> dict:
-    """Hozirgi job talablari bo‘yicha qayta hisoblangan o‘lchamlar (embedding + skills, …)."""
+    """Hozirgi job talablari bo'yicha qayta hisoblangan o'lchamlar (embedding + skills, …)."""
     ranking_service = RankingService()
     ranking_service.ensure_embeddings(
         Candidate.objects.filter(pk=candidate.pk), job
@@ -87,6 +90,7 @@ def _live_match_dimensions_bundle(candidate: Candidate, job: Job) -> dict:
         "job": {"id": job.id, "title": job.title, "company": job.company},
         "composite_score": ev.get("score"),
         "dimensions": mb.get("dimensions"),
+        "scoring_summary": mb.get("scoring_summary"),
         "weights": mb.get("weights"),
         "human_in_the_loop_notice": mb.get("human_in_the_loop_notice"),
         "fairness_notice": mb.get("fairness_notice"),
@@ -139,11 +143,16 @@ def _apply_profile_dict_to_candidate(candidate: Candidate, profile: dict) -> Non
     if edu:
         candidate.education = str(edu)[:10000]
 
+    # GitHub from CV extraction (if not already set from user account)
+    gh = (profile.get("github") or profile.get("github_url") or "").strip()
+    if gh and not candidate.github:
+        candidate.github = gh[:300]
+
     candidate.ai_profile_json = profile
 
 
 def _ensure_required_identity(candidate: Candidate, basename: str) -> None:
-    """Bo‘sh ism/email bo‘lsa minimal to‘ldirish."""
+    """Bo'sh ism/email bo'lsa minimal to'ldirish."""
     parser = CVParserService()
     if not (candidate.name or "").strip():
         guessed = parser.extract_candidate_name(candidate.extracted_text or "", basename)
@@ -153,7 +162,7 @@ def _ensure_required_identity(candidate: Candidate, basename: str) -> None:
 
 
 def _cv_core_fields_from_profile(profile: dict) -> dict:
-    """LLM JSON dan frontend uchun asosiy maydonlar (model/source kalitlari siz)."""
+    """LLM JSON dan frontend uchun asosiy maydonlar."""
     if not profile:
         return {}
     keys = (
@@ -168,6 +177,7 @@ def _cv_core_fields_from_profile(profile: dict) -> dict:
         "fairness_scan",
         "compliance",
         "skill_evidence",
+        "github",
     )
     return {k: profile.get(k) for k in keys}
 
@@ -185,7 +195,7 @@ def _extraction_meta_from_profile(profile: dict) -> dict:
 
 
 def _embedding_input_from_profile(profile: dict, candidate: Candidate) -> str:
-    """Embedding uchun matn — OpenAI qaytargan embedding_text yoki maydonlardan yig‘indi."""
+    """Embedding uchun matn — OpenAI qaytargan embedding_text yoki maydonlardan yig'indi."""
     et = (profile or {}).get("embedding_text") or ""
     if isinstance(et, str) and et.strip():
         return et.strip()[:50000]
@@ -202,14 +212,20 @@ def _embedding_input_from_profile(profile: dict, candidate: Candidate) -> str:
 @parser_classes([MultiPartParser, FormParser, JSONParser])
 def upload_cv(request):
     """
-    CV faylini yuklash. PDF/DOCX **lokal tahlil qilinmaydi** — fayl OpenAI yoki Gemini
-    orqali yuboriladi (``CV_EXTRACT_PROVIDER``), JSON natija saqlanadi.
-    Kamida bittasi kerak: ``OPENAI_API_KEY`` yoki ``GEMINI_API_KEY`` / ``GOOGLE_API_KEY``.
+    CV faylini yuklash (authentication talab qilinadi).
 
-    Ixtiyoriy: ``job_id`` (form yoki ``?job_id=``) — **tanlangan vakansiyaga biriktirish**
-    (`target_job` DB da), moslik: ``job_evaluation``, ``score``, ``skill_match``, ``explanation``,
-    ``ranking`` (oxirgi sessiya bo‘yicha). Vakansiya ro‘yxati: ``GET /api/jobs/for-upload/``.
+    - Candidate role: user profilidan first_name/last_name/email/github avtomatik olinadi.
+      Har bir candidate faqat bitta aktiv profil yarata oladi.
+    - Recruiter role: nomzod uchun yuklaydi, infolarni o'zi kiritadi.
+
+    Ixtiyoriy: job_id (form yoki ?job_id=) — vakansiyaga biriktirish + moslik hisoblash.
     """
+    if not request.user or not request.user.is_authenticated:
+        return Response(
+            {"error": "Authentication required. Please login to upload a CV."},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
     if request.FILES:
         data = request.POST.copy()
         for key in request.FILES:
@@ -223,6 +239,19 @@ def upload_cv(request):
     if job_id_raw in (None, ""):
         job_id_raw = request.query_params.get("job_id")
 
+    # Candidate users: pre-fill identity from user account if not provided
+    if request.user.role == 'candidate':
+        mutable_data = data.copy() if hasattr(data, 'copy') else dict(data)
+        if not mutable_data.get('name') and not mutable_data.get('full_name'):
+            full_name = f"{request.user.first_name} {request.user.last_name}".strip()
+            if full_name:
+                mutable_data['name'] = full_name
+        if not mutable_data.get('email') and request.user.email:
+            mutable_data['email'] = request.user.email
+        if not mutable_data.get('github') and request.user.github:
+            mutable_data['github'] = request.user.github
+        data = mutable_data
+
     serializer = CandidateUploadSerializer(data=data)
 
     if not serializer.is_valid():
@@ -233,7 +262,23 @@ def upload_cv(request):
 
     try:
         actor = get_api_actor(request)
-        candidate = serializer.save(uploaded_by=actor)
+
+        # For candidate role: link user account; prevent duplicate active profiles
+        candidate_user_link = None
+        if request.user.role == 'candidate':
+            existing = Candidate.objects.filter(user=request.user, is_active=True).first()
+            if existing:
+                return Response(
+                    {
+                        "error": "You already have an active candidate profile. "
+                                 "Use PATCH /api/candidates/<id>/update/ to update your info.",
+                        "candidate_id": existing.pk,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            candidate_user_link = request.user
+
+        candidate = serializer.save(uploaded_by=actor, user=candidate_user_link)
         basename = os.path.basename(candidate.cv_file.name)
 
         AuditLog.log_cv_upload(
@@ -242,6 +287,7 @@ def upload_cv(request):
             metadata={
                 "file_name": candidate.cv_file.name,
                 "file_size": candidate.cv_file.size,
+                "uploader_role": request.user.role,
             },
             ip_address=request.META.get("REMOTE_ADDR"),
         )
@@ -254,7 +300,7 @@ def upload_cv(request):
         if not openai_key and not gemini_key:
             return Response(
                 {
-                    "message": "Serverda OPENAI_API_KEY yoki GEMINI_API_KEY sozlanmagan — CV fayl bulut orqali o‘qiladi.",
+                    "message": "Serverda OPENAI_API_KEY yoki GEMINI_API_KEY sozlanmagan.",
                     "candidate": CandidateSerializer(candidate).data,
                     "error": "missing_llm_key",
                 },
@@ -286,9 +332,7 @@ def upload_cv(request):
                 embedding_service = EmbeddingService()
                 embedding, used_openai = embedding_service.generate_cv_embedding(embed_text)
                 candidate.embedding_vector = embedding
-                candidate.save(
-                    update_fields=["embedding_vector", "updated_at"]
-                )
+                candidate.save(update_fields=["embedding_vector", "updated_at"])
                 embedding_generated = bool(candidate.embedding_vector)
                 logger.info(
                     "Embedding for candidate %s via %s",
@@ -312,12 +356,9 @@ def upload_cv(request):
         body = {
             "message": "CV processed successfully (file pipeline)",
             "extraction_source": src,
-            # To‘liq LLM JSON — DB dagi candidate.ai_profile_json bilan bir xil
             "extracted_profile": profile,
-            # Qisqa ko‘rinish (forma / UI uchun)
             "cv_parsed": _cv_core_fields_from_profile(profile),
             "extraction": _extraction_meta_from_profile(profile),
-            # Embedding / qidiruv uchun saqlangan matn
             "extracted_text": candidate.extracted_text or "",
             "candidate": CandidateSerializer(candidate).data,
             "details": details,
@@ -329,7 +370,7 @@ def upload_cv(request):
         if (profile or {}).get("gemini_model"):
             body["gemini_model"] = profile.get("gemini_model")
 
-        # --- Job bilan baholash (frontend: score, skill_breakdown, WHY, rank) ---
+        # Job evaluation (score, skill_breakdown, WHY, rank)
         if job_id_raw not in (None, ""):
             try:
                 jid = int(job_id_raw)
@@ -364,11 +405,13 @@ def upload_cv(request):
                         body["audit"] = fe["audit"]
                         body["job_context"] = fe.get("job")
                         body["candidate_profile"] = fe["candidate"]
+                        # Scoring summary for detailed analysis
+                        mb = ev.get("match_breakdown") or {}
+                        body["scoring_summary"] = mb.get("scoring_summary")
                     except Exception as e:
                         logger.exception("Job match on upload failed: %s", e)
                         body["job_evaluation_error"] = str(e)
 
-        # Serializer yangi target_job ni ko‘rsatishi uchun
         body["candidate"] = CandidateSerializer(candidate).data
 
         return Response(body, status=status.HTTP_201_CREATED)
@@ -383,19 +426,23 @@ def upload_cv(request):
 
 class CandidateListView(generics.ListAPIView):
     """
-    List all active candidates.
-
-    Query: ``?job_id=<id>`` — shu job bo‘yicha **oxirgi ranking sessiyasi** dagi
-    ``ai_score`` bo‘yicha kamayish tartibida (yuqori ball birinchi). Sessiya bo‘lmasa
-    — oddiy ``-created_at``. ``?target_job_id=`` — faqat shu vakansiyaga biriktirilganlar.
-    Sahifa: **10** ta (``page``, ``page_size``).
+    List active candidates.
+    - Recruiter: all active candidates
+    - Candidate: only their own profile
+    Query: ?job_id=<id> — sorted by ai_score from latest ranking session.
     """
     serializer_class = CandidateSerializer
     pagination_class = CandidateListPagination
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        user = self.request.user
         queryset = Candidate.objects.filter(is_active=True)
 
+        # Candidates see only their own profile
+        if hasattr(user, 'role') and user.role == 'candidate':
+            queryset = queryset.filter(user=user)
+        
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(
@@ -476,13 +523,14 @@ class CandidateListView(generics.ListAPIView):
 
 class CandidateDetailView(generics.RetrieveAPIView):
     """
-    Batafsil nomzod + ``ranking_history`` (har sessiya: ball, o‘rin, **dimensions**).
-
-    Query: ``job_id`` — live o‘lchamlar shu job bo‘yicha (yo‘q bo‘lsa va ``target_job``
-    bor bo‘lsa, ``target_job`` ishlatiladi). ``no_live_dimensions=1`` — qayta hisoblamaslik.
+    Detailed candidate info + ranking_history with scoring_summary.
+    - Recruiter: can view any candidate
+    - Candidate: can only view their own profile
+    Query: job_id — live match dimensions for that job.
     """
     serializer_class = CandidateDetailSerializer
     queryset = Candidate.objects.all()
+    permission_classes = [IsAuthenticated, IsRecruiterOrOwner]
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -535,6 +583,8 @@ class CandidateDetailView(generics.RetrieveAPIView):
                         "session_id": session.id,
                         "candidates_count": session.candidates_count,
                     }
+                    mb = cr.match_breakdown if isinstance(cr.match_breakdown, dict) else {}
+                    data["scoring_summary"] = mb.get("scoring_summary")
 
         return Response(data)
 
@@ -542,9 +592,11 @@ class CandidateDetailView(generics.RetrieveAPIView):
 class CandidateUpdateView(generics.UpdateAPIView):
     """
     Update candidate information.
+    Recruiter: can update any. Candidate: can only update their own.
     """
     serializer_class = CandidateUpdateSerializer
     queryset = Candidate.objects.all()
+    permission_classes = [IsAuthenticated, IsRecruiterOrOwner]
 
     def perform_update(self, serializer):
         candidate = serializer.save()
@@ -554,15 +606,16 @@ class CandidateUpdateView(generics.UpdateAPIView):
             description=f"Updated candidate {candidate.name}",
             content_object=candidate,
             risk_level='low',
-            ip_address=self.request.META.get('REMOTE_ADDR')
+            ip_address=self.request.META.get('REMOTE_ADDR'),
         )
 
 
 class CandidateDeleteView(generics.DestroyAPIView):
     """
-    Delete (deactivate) a candidate.
+    Deactivate a candidate. Only recruiters can delete.
     """
     queryset = Candidate.objects.all()
+    permission_classes = [IsAuthenticated, IsRecruiter]
 
     def perform_destroy(self, instance):
         instance.is_active = False
@@ -573,5 +626,5 @@ class CandidateDeleteView(generics.DestroyAPIView):
             description=f"Deactivated candidate {instance.name}",
             content_object=instance,
             risk_level='medium',
-            ip_address=self.request.META.get('REMOTE_ADDR')
+            ip_address=self.request.META.get('REMOTE_ADDR'),
         )

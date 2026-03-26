@@ -1,173 +1,222 @@
-# AI CV System — Operations Guide
+# AI CV System — Product Workflow and Decision Guide
 
-This guide explains **how to run** the backend, **what each major part does**, and **what rankings depend on** when you read API results. It complements **`README.md`** (architecture and code documentation) and **`API.md`** (endpoint details).
-
----
-
-## 1. Prerequisites
-
-- **Python 3.10+** (3.11 recommended)
-- **pip** and a virtual environment (recommended)
-- Optional: **OpenAI API key** for real embeddings and OpenAI-based CV parsing
-- Optional: **Google Gemini API key** for the alternative file pipeline
+This document explains the system in business terms: the workflow, structure, filters, common problems, and practical solutions. It is intentionally **not API-based**.
 
 ---
 
-## 2. Local setup
+## 1) What this system does
 
-### 2.1 Create environment
+The AI CV System helps recruiters process many CVs quickly and consistently.
 
-From the `ai_cv_system` directory:
+It does three core jobs:
 
-```bash
-python -m venv env
-source env/bin/activate   # Windows: env\Scripts\activate
-pip install -r requirements.txt
-```
+1. **Transforms CV files into structured candidate profiles** (skills, experience, education, summary).
+2. **Compares each candidate against a target job** using explainable dimensions.
+3. **Generates ranked candidate lists** so HR can review faster and make final human decisions.
 
-### 2.2 Environment file
-
-Copy or create **`.env`** in the **`ai_cv_system`** folder (same level as `manage.py`). The app loads it via `config/settings.py` using `BASE_DIR`.
-
-Minimal example:
-
-```env
-SECRET_KEY=your-secret-key
-DEBUG=True
-OPENAI_API_KEY=sk-...
-GEMINI_API_KEY=...
-```
-
-If **`OPENAI_API_KEY`** is missing, embeddings fall back to a **dummy** mode: ranking still runs, but **semantic similarity** is not meaningful for production decisions—use only for UI wiring tests.
-
-### 2.3 Database and static files
-
-```bash
-python manage.py migrate
-python manage.py createsuperuser   # optional, for admin and token user
-```
-
-Development database defaults to **`db.sqlite3`** in the project root.
-
-### 2.4 Run the server
-
-```bash
-python manage.py runserver 0.0.0.0:8000
-```
-
-- **Admin**: `http://127.0.0.1:8000/admin/`
-- **API root**: `http://127.0.0.1:8000/api/...`
-
-### 2.5 CORS (browser frontends)
-
-Allowed origins are configured in **`config/settings.py`** (`_default_cors_origins` and optional `CORS_ALLOWED_ORIGINS`). Add your production SPA origin (e.g. Netlify) to defaults or to the environment variable as a comma-separated list.
+The platform is a **decision-support tool**, not an auto-hiring engine.
 
 ---
 
-## 3. What each major component does
+## 2) End-to-end workflow
 
-| Component | Role in operations |
-|-----------|-------------------|
-| **Candidates app** | Upload CVs, list/filter candidates, retrieve detail with optional **ranking history** and **live match dimensions** for a job. |
-| **Jobs app** | Define jobs: description, requirements text, **`required_skills`** / **`preferred_skills`** arrays, **`min_experience`**. Job text is embedded for semantic matching. |
-| **Ranking app** | **Run** a batch ranking for one job (`POST /api/ranking/run/`), **preview** a single pair without saving a session, **read** latest rankings per job, **human override** on a row, **analytics**. |
-| **Embedding service** | Lazily builds **job** and **candidate** vectors; used for the **semantic_alignment** dimension. |
-| **Explanation service** | Builds **`match_breakdown`** (dimensions, weights, composite score) and narrative text. |
-| **Audit app** | Records notable actions (e.g. ranking runs) when integrated. |
+### Step 1: Define the job clearly
 
----
+Recruiter creates a job profile with:
+- clear role description
+- required skills
+- preferred skills
+- minimum experience
 
-## 4. Typical workflows
+Why this matters: ranking quality is heavily dependent on how clear and specific the job data is.
 
-### 4.1 Create a job
+### Step 2: Upload candidate CVs
 
-Use the jobs API or Django admin to create a **Job** with:
+CV files are ingested and parsed by AI extraction logic.
+The system stores structured fields such as:
+- candidate identity/contact
+- extracted skills
+- years of experience
+- education summary
+- professional summary
 
-- Clear **`description`** and **`requirements`** (they feed the job embedding and HR context).
-- Structured **`required_skills`** and **`preferred_skills`** (strings must match how you expect them to appear on candidate profiles for **literal** skill overlap).
-- **`min_experience`** aligned with your bar (years).
+### Step 3: Build match intelligence
 
-Poor skill lists or empty lists reduce the usefulness of the **required_skills** / **preferred_skills** dimensions (neutral defaults apply when lists are empty).
+The system generates text embeddings for job and candidate content.
+Then it computes multiple match dimensions and a final composite score.
 
-### 4.2 Upload candidates
+### Step 4: Produce ranking list
 
-Use **`POST /api/candidates/upload/`** (see **`API.md`**) with optional **`job_id`** to associate a **target job** for convenience. The pipeline extracts text, fills **skills**, **experience_years**, **education**, etc. Quality of extraction directly affects skill matching and education heuristics.
+Candidates are sorted by composite score (highest first) and assigned rank positions.
+Each row includes explainability details so HR can understand *why* someone ranked higher or lower.
 
-### 4.3 Run a ranking session
+### Step 5: Human review and decision
 
-Call **`POST /api/ranking/run/`** with the target **`job_id`** (and optional filters for which candidates to include, per your API contract). The backend:
+Recruiters review ranked candidates, check breakdowns, and apply human judgment:
+- shortlist
+- accept
+- reject
 
-1. Ensures **embeddings** exist for the job and candidates (may call OpenAI or use dummy mode).
-2. Scores each candidate with the **same** explainable formula (see section 5).
-3. Sorts by **composite score** and writes **`RankingSession`** + **`CandidateRanking`** rows.
-
-Retrieve results with **`GET /api/ranking/<job_id>/`** (latest session for that job—confirm exact behavior in **`API.md`**).
-
-### 4.4 Inspect one candidate vs one job
-
-- **Preview (no DB session)**: use ranking **preview** endpoint if available (`/api/ranking/preview/`) — see **`API.md`**.
-- **Candidate detail**: **`GET /api/candidates/<id>/`** may include **`ranking_history`** (past sessions with stored **`match_breakdown`**) and **`match_dimensions_live`** when **`job_id`** is passed or **`target_job`** is set—useful to see **dimensions** without running a full session.
+Human decisions remain the final authority.
 
 ---
 
-## 5. What rankings are based on (reading results)
+## 3) How AI is involved (clear explanation)
 
-When you see **`ai_score`**, **`ai_rank`**, or **`match_breakdown`**, interpret them as follows.
+AI is involved in two places:
 
-### 5.1 Single source of ordering
+### A) CV understanding
+- AI extracts structured information from raw CV files.
+- It normalizes text into machine-usable fields.
+- This reduces manual data entry and speeds up screening.
 
-Within one **ranking session**, ordering is by **`ai_score`** descending (ties are rare; implementation uses float ordering). **`ai_rank`** is the position after sorting (1 = best).
+### B) Matching and ranking
+- Embeddings measure semantic closeness between candidate and job context.
+- Rule-based dimensions evaluate skill coverage, experience fit, and education signals.
+- A weighted composite score determines ranking order.
 
-### 5.2 What `ai_score` is
-
-**`ai_score`** is the **composite score** (0–100), **not** a raw embedding distance. It is:
-
-\[
-\sum_{\text{dimensions}} (\text{score on dimension}) \times (\text{weight})
-\]
-
-Weights are fixed in code (`MATCH_DIMENSION_WEIGHTS`); see **`README.md`** for the table.
-
-### 5.3 Dimension checklist (what to trust)
-
-| Dimension | You should know |
-|-----------|-----------------|
-| **Semantic alignment** | Depends on **OpenAI embeddings** when the API key is set. Reflects text similarity, **not** fact-checking. |
-| **Required / preferred skills** | **String overlap** between job skill arrays and **candidate.skills** (from parsing). Typos or synonyms may not match. |
-| **Experience fit** | Compares **numbers** on the candidate profile vs **`min_experience`**. |
-| **Education signals** | **Keyword heuristic** only—not verification of degrees. |
-
-### 5.4 What is explicitly not used in scoring
-
-The dimension logic is designed so that **gender, age, ethnicity, and religion** are **not** inputs to these scores. Optional **fairness / proxy** scans on the candidate record inform notices and flags but do not drive the weighted composite in the same way as the five dimensions above (see code for **`merge_bias_flags_for_ranking`** behavior).
-
-### 5.5 Human-in-the-loop
-
-Stored fields such as **`human_decision`**, **`human_score`**, and review timestamps exist for **HR override** workflows. The AI output remains **advisory** until your process records a human decision.
+Important: AI supports prioritization; it does **not** make irreversible hiring decisions.
 
 ---
 
-## 6. Production notes
+## 4) Ranking logic and dimensions
 
-- Set **`DEBUG=False`**, use a strong **`SECRET_KEY`**, and restrict **`ALLOWED_HOSTS`** appropriately (currently permissive in default settings—tighten for real deployments).
-- Use **`CORS_ALLOWED_ORIGINS`** for exact frontend URLs; avoid `*` with credentials.
-- For PythonAnywhere or similar: configure **static/media**, **HTTPS**, and **reload** after code or `.env` changes.
-- If embeddings are dummy, document internally that **semantic** ranks are for testing only.
+Ranking uses a weighted, explainable model.
+The final score is based on these dimensions:
 
----
+- **Semantic alignment**: how closely candidate and job texts match in meaning.
+- **Required skills coverage**: how many required skills are present.
+- **Preferred skills coverage**: extra desirables matched.
+- **Experience fit**: candidate years vs minimum job requirement.
+- **Education signals**: education relevance heuristic from extracted text.
 
-## 7. Troubleshooting
-
-| Symptom | Likely cause |
-|---------|----------------|
-| All candidates get similar scores | Dummy embeddings, or very generic job/candidate text. |
-| Skills always “missing” | Job skills not listed, or naming mismatch vs extracted candidate skills. |
-| `match_dimensions_live` error | Missing embedding API key, network failure, or empty `extracted_text`. |
-| Ranking session empty / wrong job | Wrong `job_id`, inactive job filter, or no candidates in queryset. |
+### What rank means
+- Rank #1 = highest composite score in that session.
+- Lower rank does not always mean “bad candidate”; it means “less aligned to this specific job definition.”
 
 ---
 
-## 8. Further reading
+## 5) Filter strategy (for better shortlist quality)
 
-- **`../README.md`** — Architecture, module list, scoring formula reference.
-- **`API.md`** — Request/response examples and query parameters.
+Use filters to reduce noise before final review.
+
+Recommended filter groups:
+
+- **Job scope filters**
+  - target role
+  - level (junior/mid/senior)
+  - location or timezone fit
+
+- **Candidate capability filters**
+  - minimum score threshold
+  - required skill must-have set
+  - experience range
+  - language proficiency
+
+- **Process filters**
+  - human decision status (pending/shortlisted/rejected)
+  - reviewed vs not reviewed
+  - latest session vs historical session
+
+Best practice:
+- start broad,
+- apply must-have filters,
+- then tighten with score and review-status filters.
+
+---
+
+## 6) System structure (business view)
+
+### Candidate domain
+Stores uploaded CV file, extracted profile, and historical match/ranking results.
+
+### Job domain
+Stores hiring requirements and target profile definitions used for matching.
+
+### Ranking domain
+Runs scoring sessions and keeps ranking history, explanations, and human overrides.
+
+### AI services layer
+Handles CV extraction, embeddings, scoring dimensions, and explanation text generation.
+
+### Audit and governance layer
+Tracks actions and supports compliance-style traceability.
+
+---
+
+## 7) Common problems and practical solutions
+
+### Problem 1: Results feel inaccurate
+**Cause:** Job requirements are too generic or incomplete.  
+**Solution:** Improve job quality first (clear required skills, realistic experience bar, precise role scope).
+
+### Problem 2: Strong candidates ranked lower than expected
+**Cause:** Skill naming mismatch (e.g., synonyms, abbreviation differences).  
+**Solution:** Standardize skill taxonomy and normalize skill aliases.
+
+### Problem 3: Similar scores across many candidates
+**Cause:** Weak signal in job text or non-production embedding setup.  
+**Solution:** Use richer job descriptions and production embedding configuration.
+
+### Problem 4: Recruiters do not trust AI output
+**Cause:** Black-box feeling.  
+**Solution:** Expose dimension-level explanations and require human review gates before final decisions.
+
+### Problem 5: Screening takes too long despite automation
+**Cause:** UI does not support quick comparison and filtering.  
+**Solution:** Build workflow-first dashboard features (see next section).
+
+---
+
+## 8) Dashboard improvements (easier and more attractive)
+
+To make implementation easier for recruiters and visually stronger, focus on:
+
+### A) Workflow-first layout
+- Left panel: filter controls
+- Center: ranked table/cards
+- Right drawer: candidate detail + dimension breakdown
+
+### B) Decision acceleration widgets
+- quick action buttons: shortlist / reject / hold
+- bulk actions for selected candidates
+- saved filter presets per job
+
+### C) Explainability UI
+- score gauge + dimension bars
+- matched vs missing skills chips
+- confidence and fairness notices in plain language
+
+### D) Clarity and trust
+- show “AI suggestion” badge, not “AI decision”
+- always display “Human final decision required”
+
+### E) Visual polish
+- consistent spacing, 8px grid
+- high-contrast status colors
+- sortable columns and sticky table header
+- lightweight animations only where they improve comprehension
+
+---
+
+## 9) Recommended operating model
+
+1. Hiring manager defines job profile quality checklist.
+2. Recruiter uploads CVs and runs initial ranking.
+3. Recruiter applies filters and prepares shortlist.
+4. Hiring manager reviews top candidates with dimension breakdown.
+5. Team records human decisions and feedback.
+6. Process owner reviews outcomes and refines job/skill definitions.
+
+This creates a repeatable loop where model usefulness improves through better input quality and structured review behavior.
+
+---
+
+## 10) Key message for stakeholders
+
+The AI CV System improves speed, consistency, and transparency in CV screening.
+It is most effective when:
+- job definitions are clear,
+- filters are used intentionally,
+- explanations are visible,
+- and humans stay in control of final hiring outcomes.

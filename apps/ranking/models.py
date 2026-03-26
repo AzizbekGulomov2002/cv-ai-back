@@ -144,10 +144,33 @@ class CandidateRanking(models.Model):
         help_text='When human review was conducted'
     )
     
+    # Email notification tracking
+    email_sent = models.BooleanField(
+        default=False,
+        help_text='Whether a decision email has been sent to the candidate',
+    )
+    email_sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='When the decision email was sent',
+    )
+    email_type = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text='Type of last email sent: accept | reject',
+    )
+
+    # Structured rejection reasons (for reject emails and audit)
+    rejection_reasons = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='List of specific rejection reasons with scores and explanations',
+    )
+
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     class Meta:
         db_table = 'candidate_rankings'
         ordering = ['ai_rank']

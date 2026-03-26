@@ -185,12 +185,15 @@ class ExplanationService:
         composite = sum(d["weighted_contribution"] for d in dimensions)
         composite = max(0.0, min(100.0, composite))
 
+        scoring_summary = self._build_scoring_summary(dimensions, composite)
+
         return {
             "schema_version": 1,
             "job_id": job.id,
             "candidate_id": candidate.id,
             "composite_score": round(composite, 2),
             "dimensions": dimensions,
+            "scoring_summary": scoring_summary,
             "weights": MATCH_DIMENSION_WEIGHTS,
             "human_in_the_loop_notice": (
                 "This score is decision-support only. No automated hiring decision. "
@@ -201,6 +204,93 @@ class ExplanationService:
                 "CV proxy flags (if any) are stored separately for transparency review."
             ),
         }
+
+    def _build_scoring_summary(
+        self, dimensions: List[Dict[str, Any]], composite: float
+    ) -> Dict[str, Any]:
+        """
+        Dimansiyalarni kuchli/o'rtacha/kuchsiz toifalariga ajratadi.
+        Har biri uchun aniq raqamlar va sabab (reason) ko'rsatiladi.
+
+        Thresholds:
+          strong  : score >= 75
+          average : 50 <= score < 75
+          weak    : score < 50
+        """
+        strong, average, weak = [], [], []
+
+        for d in dimensions:
+            score_val = float(d.get("score", 0))
+            entry = {
+                "id": d.get("id"),
+                "label": d.get("label"),
+                "score": round(score_val, 1),
+                "weight_pct": round(float(d.get("weight", 0)) * 100, 0),
+                "weighted_contribution": round(float(d.get("weighted_contribution", 0)), 2),
+                "reason": d.get("explanation", ""),
+            }
+            if "matched" in d:
+                entry["matched"] = d["matched"]
+            if "missing" in d:
+                entry["missing"] = d["missing"]
+
+            if score_val >= 75:
+                strong.append(entry)
+            elif score_val >= 50:
+                average.append(entry)
+            else:
+                weak.append(entry)
+
+        # Overall tier
+        if composite >= 75:
+            overall_tier = "strong"
+            overall_label = "Strong Match"
+        elif composite >= 50:
+            overall_tier = "average"
+            overall_label = "Average Match"
+        else:
+            overall_tier = "weak"
+            overall_label = "Weak Match"
+
+        return {
+            "composite_score": round(composite, 2),
+            "overall_tier": overall_tier,
+            "overall_label": overall_label,
+            "strong": strong,
+            "average": average,
+            "weak": weak,
+            "counts": {
+                "strong": len(strong),
+                "average": len(average),
+                "weak": len(weak),
+            },
+            "summary_text": self._scoring_summary_text(strong, average, weak, composite),
+        }
+
+    @staticmethod
+    def _scoring_summary_text(
+        strong: List, average: List, weak: List, composite: float
+    ) -> str:
+        """Human-readable qisqa xulosa."""
+        lines = [
+            f"Overall composite score: {composite:.1f}/100.",
+        ]
+        if strong:
+            names = ", ".join(e["label"] for e in strong)
+            lines.append(
+                f"Strong areas ({len(strong)}): {names}."
+            )
+        if average:
+            names = ", ".join(e["label"] for e in average)
+            lines.append(
+                f"Average areas ({len(average)}): {names}."
+            )
+        if weak:
+            names = ", ".join(e["label"] for e in weak)
+            lines.append(
+                f"Weak areas ({len(weak)}): {names}."
+            )
+        return " ".join(lines)
 
     def narrative_from_match_breakdown(self, breakdown: Dict[str, Any]) -> str:
         """match_breakdown dan inson o‘qiydigan WHY matn."""

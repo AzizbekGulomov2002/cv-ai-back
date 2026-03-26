@@ -83,11 +83,28 @@ class Candidate(models.Model):
         help_text='OpenAI embedding vector'
     )
     
+    # GitHub URL (filled from candidate user profile or CV extraction)
+    github = models.URLField(
+        max_length=300,
+        blank=True,
+        help_text='GitHub profile URL',
+    )
+
+    # Candidate user account (nullable — may be uploaded by a recruiter on behalf)
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='candidate_profile',
+        help_text='Linked candidate user account (role=candidate)',
+    )
+
     # Metadata
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name='uploaded_candidates'
+        related_name='uploaded_candidates',
     )
     
     created_at = models.DateTimeField(auto_now_add=True)
