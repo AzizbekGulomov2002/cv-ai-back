@@ -174,6 +174,7 @@ _default_cors_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "https://cvaianalyse.netlify.app",
+    "https://cvaianalyser.netlify.app"
 ]
 # PythonAnywhere / production: set e.g. CORS_ALLOWED_ORIGINS=https://myapp.vercel.app,https://username.pythonanywhere.com
 _extra_cors = os.getenv("CORS_ALLOWED_ORIGINS", "").strip()
