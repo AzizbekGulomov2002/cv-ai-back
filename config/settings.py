@@ -138,9 +138,9 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Custom User Model
 AUTH_USER_MODEL = 'users.User'
 
-# API auth: default TRUE — login required.
-# register/login endpoints are always AllowAny.
-_API_REQUIRE_AUTH = os.getenv('API_REQUIRE_AUTH', 'true').lower() in ('1', 'true', 'yes')
+# API auth: default FALSE — all endpoints open (GET/POST without token).
+# Set API_REQUIRE_AUTH=true in .env to require login again.
+API_REQUIRE_AUTH = os.getenv('API_REQUIRE_AUTH', 'false').lower() in ('1', 'true', 'yes')
 
 # Django REST Framework
 REST_FRAMEWORK = {
@@ -150,7 +150,7 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated'
-        if _API_REQUIRE_AUTH
+        if API_REQUIRE_AUTH
         else 'rest_framework.permissions.AllowAny',
     ],
     'DEFAULT_RENDERER_CLASSES': [

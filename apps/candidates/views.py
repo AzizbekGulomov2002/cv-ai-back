@@ -11,11 +11,10 @@ from django.db.models.functions import Coalesce
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.audit.models import AuditLog
-from apps.users.permissions import IsRecruiter, IsRecruiterOrOwner
+from apps.users.permissions import IsRecruiter, IsRecruiterOrOwner, OptionalAuth
 from services.api_actor import get_api_actor
 from services.embedding_service import EmbeddingService
 from services.cv_file_extract import extract_structured_profile_from_cv_file
@@ -212,7 +211,7 @@ def _embedding_input_from_profile(profile: dict, candidate: Candidate) -> str:
 @parser_classes([MultiPartParser, FormParser, JSONParser])
 def upload_cv(request):
     """
-    CV faylini yuklash (authentication talab qilinadi).
+    CV faylini yuklash (auth ixtiyoriy — API_REQUIRE_AUTH=false bo'lsa token shart emas).
 
     - Candidate role: user profilidan first_name/last_name/email/github avtomatik olinadi.
       Har bir candidate faqat bitta aktiv profil yarata oladi.
@@ -220,11 +219,7 @@ def upload_cv(request):
 
     Ixtiyoriy: job_id (form yoki ?job_id=) — vakansiyaga biriktirish + moslik hisoblash.
     """
-    if not request.user or not request.user.is_authenticated:
-        return Response(
-            {"error": "Authentication required. Please login to upload a CV."},
-            status=status.HTTP_401_UNAUTHORIZED,
-        )
+    actor = get_api_actor(request)
 
     if request.FILES:
         data = request.POST.copy()
@@ -240,7 +235,10 @@ def upload_cv(request):
         job_id_raw = request.query_params.get("job_id")
 
     # Candidate users: pre-fill identity from user account if not provided
-    if request.user.role == 'candidate':
+    if (
+        getattr(request.user, "is_authenticated", False)
+        and getattr(request.user, "role", None) == "candidate"
+    ):
         mutable_data = data.copy() if hasattr(data, 'copy') else dict(data)
         if not mutable_data.get('name') and not mutable_data.get('full_name'):
             full_name = f"{request.user.first_name} {request.user.last_name}".strip()
@@ -261,11 +259,12 @@ def upload_cv(request):
         )
 
     try:
-        actor = get_api_actor(request)
-
         # For candidate role: link user account; prevent duplicate active profiles
         candidate_user_link = None
-        if request.user.role == 'candidate':
+        if (
+            getattr(request.user, "is_authenticated", False)
+            and getattr(request.user, "role", None) == "candidate"
+        ):
             existing = Candidate.objects.filter(user=request.user, is_active=True).first()
             if existing:
                 return Response(
@@ -287,7 +286,7 @@ def upload_cv(request):
             metadata={
                 "file_name": candidate.cv_file.name,
                 "file_size": candidate.cv_file.size,
-                "uploader_role": request.user.role,
+                "uploader_role": getattr(request.user, "role", "anonymous"),
             },
             ip_address=request.META.get("REMOTE_ADDR"),
         )
@@ -433,14 +432,17 @@ class CandidateListView(generics.ListAPIView):
     """
     serializer_class = CandidateSerializer
     pagination_class = CandidateListPagination
-    permission_classes = [IsAuthenticated]
+    permission_classes = [OptionalAuth]
 
     def get_queryset(self):
         user = self.request.user
         queryset = Candidate.objects.filter(is_active=True)
 
-        # Candidates see only their own profile
-        if hasattr(user, 'role') and user.role == 'candidate':
+        # Candidates see only their own profile (when logged in as candidate)
+        if (
+            getattr(user, "is_authenticated", False)
+            and getattr(user, "role", None) == "candidate"
+        ):
             queryset = queryset.filter(user=user)
         
         search = self.request.query_params.get('search')
@@ -530,7 +532,7 @@ class CandidateDetailView(generics.RetrieveAPIView):
     """
     serializer_class = CandidateDetailSerializer
     queryset = Candidate.objects.all()
-    permission_classes = [IsAuthenticated, IsRecruiterOrOwner]
+    permission_classes = [OptionalAuth, IsRecruiterOrOwner]
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -596,7 +598,7 @@ class CandidateUpdateView(generics.UpdateAPIView):
     """
     serializer_class = CandidateUpdateSerializer
     queryset = Candidate.objects.all()
-    permission_classes = [IsAuthenticated, IsRecruiterOrOwner]
+    permission_classes = [OptionalAuth, IsRecruiterOrOwner]
 
     def perform_update(self, serializer):
         candidate = serializer.save()
@@ -615,7 +617,7 @@ class CandidateDeleteView(generics.DestroyAPIView):
     Deactivate a candidate. Only recruiters can delete.
     """
     queryset = Candidate.objects.all()
-    permission_classes = [IsAuthenticated, IsRecruiter]
+    permission_classes = [OptionalAuth, IsRecruiter]
 
     def perform_destroy(self, instance):
         instance.is_active = False

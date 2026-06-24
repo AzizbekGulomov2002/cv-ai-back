@@ -5,11 +5,9 @@ All endpoints require role=recruiter.
 import logging
 
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
-
-from apps.users.permissions import IsRecruiter
+from apps.users.permissions import IsRecruiter, OptionalAuth
 from apps.ranking.rank_utils import leaderboard_rank_score_100
 from services.stats_service import StatsService
 
@@ -17,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated, IsRecruiter])
+@permission_classes([OptionalAuth, IsRecruiter])
 def recruiter_dashboard(request):
     """
     Full recruiter statistics dashboard.
@@ -88,7 +86,7 @@ def recruiter_dashboard(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated, IsRecruiter])
+@permission_classes([OptionalAuth, IsRecruiter])
 def job_stats_detail(request, job_id):
     """
     Detailed statistics for a single job.

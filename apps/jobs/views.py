@@ -6,11 +6,8 @@ import logging
 from django.db.models import Count, OuterRef, Subquery, FloatField
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-
-from apps.audit.models import AuditLog
-from apps.users.permissions import IsRecruiter
+from apps.users.permissions import IsRecruiter, OptionalAuth
 from services.api_actor import get_api_actor
 from services.embedding_service import EmbeddingService
 from .models import Job
@@ -30,7 +27,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([OptionalAuth])
 def job_choices_for_cv_upload(request):
     """
     CV yuklash formasi uchun: barcha aktiv vakansiyalar + UI matnlari.
@@ -62,7 +59,7 @@ def job_choices_for_cv_upload(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([OptionalAuth])
 def job_apply_info(request, pk):
     """
     Candidate-facing job detail with application status for the requesting user.
@@ -97,7 +94,7 @@ def job_apply_info(request, pk):
 
     # Check if this user is a candidate with a profile
     user = request.user
-    if user.role == "candidate":
+    if getattr(user, "is_authenticated", False) and getattr(user, "role", None) == "candidate":
         candidate = Candidate.objects.filter(user=user, is_active=True).first()
         if candidate:
             # Check if applied for this job
@@ -125,7 +122,7 @@ def job_apply_info(request, pk):
                         data["missing_skills"] = cr.missing_skills
                         mb = cr.match_breakdown if isinstance(cr.match_breakdown, dict) else {}
                         data["scoring_summary"] = mb.get("scoring_summary")
-    elif user.role == "recruiter":
+    elif getattr(user, "is_authenticated", False) and getattr(user, "role", None) == "recruiter":
         # Recruiters see total applicants for this job
         data["applicants_count"] = Candidate.objects.filter(
             target_job=job, is_active=True
@@ -135,7 +132,7 @@ def job_apply_info(request, pk):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([OptionalAuth])
 def my_applications(request):
     """
     Candidate: list all jobs they have applied to with their scores and status.
@@ -144,7 +141,17 @@ def my_applications(request):
     from apps.candidates.models import Candidate
     from apps.ranking.models import CandidateRanking, RankingSession
 
-    if request.user.role != "candidate":
+    if not getattr(request.user, "is_authenticated", False):
+        return Response(
+            {
+                "message": "Login to see your applications.",
+                "has_profile": False,
+                "applications": [],
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    if getattr(request.user, "role", None) != "candidate":
         return Response(
             {"error": "This endpoint is for candidates only."},
             status=status.HTTP_403_FORBIDDEN,
@@ -227,7 +234,7 @@ class JobListView(generics.ListAPIView):
 
     Query params: search, job_type, level, location
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [OptionalAuth]
 
     def get_serializer_class(self):
         return JobCandidateListSerializer
@@ -274,7 +281,7 @@ class JobListView(generics.ListAPIView):
 
         # For candidates: look up their own application status per job
         candidate = None
-        if request.user.role == "candidate":
+        if getattr(request.user, "is_authenticated", False) and getattr(request.user, "role", None) == "candidate":
             candidate = Candidate.objects.filter(
                 user=request.user, is_active=True
             ).first()
@@ -316,7 +323,7 @@ class JobDetailView(generics.RetrieveAPIView):
     """
     serializer_class = JobSerializer
     queryset = Job.objects.all()
-    permission_classes = [IsAuthenticated]
+    permission_classes = [OptionalAuth]
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +335,7 @@ class JobCreateView(generics.CreateAPIView):
     Create a new job posting. Recruiter only.
     """
     serializer_class = JobCreateSerializer
-    permission_classes = [IsAuthenticated, IsRecruiter]
+    permission_classes = [OptionalAuth, IsRecruiter]
 
     def perform_create(self, serializer):
         actor = get_api_actor(self.request)
@@ -364,7 +371,7 @@ class JobUpdateView(generics.UpdateAPIView):
     """
     serializer_class = JobUpdateSerializer
     queryset = Job.objects.all()
-    permission_classes = [IsAuthenticated, IsRecruiter]
+    permission_classes = [OptionalAuth, IsRecruiter]
 
     def perform_update(self, serializer):
         job = serializer.save()
@@ -395,7 +402,7 @@ class JobDeleteView(generics.DestroyAPIView):
     Delete (deactivate) a job posting. Recruiter only.
     """
     queryset = Job.objects.all()
-    permission_classes = [IsAuthenticated, IsRecruiter]
+    permission_classes = [OptionalAuth, IsRecruiter]
 
     def perform_destroy(self, instance):
         instance.is_active = False

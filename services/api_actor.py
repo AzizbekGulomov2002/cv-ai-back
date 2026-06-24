@@ -26,6 +26,7 @@ def get_api_actor(request):
             "email": "anonymous-api@local.invalid",
             "first_name": "Public",
             "last_name": "API",
+            "role": "recruiter",
         },
     )
     if created:

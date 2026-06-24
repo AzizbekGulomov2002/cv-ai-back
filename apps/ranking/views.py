@@ -3,7 +3,6 @@ Views for AI-powered candidate ranking system.
 """
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -12,7 +11,7 @@ import logging
 from apps.audit.models import AuditLog
 from apps.candidates.models import Candidate
 from apps.jobs.models import Job
-from apps.users.permissions import IsRecruiter
+from apps.users.permissions import IsRecruiter, OptionalAuth
 from services.api_actor import get_api_actor
 from services.email_service import EmailService
 from services.ranking_service import RankingService
@@ -349,7 +348,7 @@ def get_ranking_analytics(request):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated, IsRecruiter])
+@permission_classes([OptionalAuth, IsRecruiter])
 def candidate_rank_history(request, candidate_id):
     """
     All ranking results for one candidate across every session (newest session first).
@@ -406,7 +405,7 @@ class RankingSessionListView(generics.ListAPIView):
     List all ranking sessions (recruiters only).
     """
     serializer_class = RankingSessionSerializer
-    permission_classes = [IsAuthenticated, IsRecruiter]
+    permission_classes = [OptionalAuth, IsRecruiter]
 
     def get_queryset(self):
         queryset = RankingSession.objects.all()
@@ -437,7 +436,7 @@ class CandidateRankingDetailView(generics.RetrieveAPIView):
     """
     serializer_class = CandidateRankingSerializer
     queryset = CandidateRanking.objects.all()
-    permission_classes = [IsAuthenticated, IsRecruiter]
+    permission_classes = [OptionalAuth, IsRecruiter]
 
 
 # ---------------------------------------------------------------------------
@@ -445,7 +444,7 @@ class CandidateRankingDetailView(generics.RetrieveAPIView):
 # ---------------------------------------------------------------------------
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated, IsRecruiter])
+@permission_classes([OptionalAuth, IsRecruiter])
 def send_accept_email(request, ranking_id):
     """
     Recruiter accepts a candidate — sends personalised acceptance email via SMTP.
@@ -532,7 +531,7 @@ def send_accept_email(request, ranking_id):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated, IsRecruiter])
+@permission_classes([OptionalAuth, IsRecruiter])
 def send_reject_email(request, ranking_id):
     """
     Recruiter rejects a candidate — sends detailed rejection email via SMTP.

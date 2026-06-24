@@ -4,12 +4,14 @@ Views for user authentication and management.
 from rest_framework import status, generics
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny
+from apps.users.permissions import OptionalAuth
 from rest_framework.response import Response
 from rest_framework.authtoken.models import Token
 from django.utils import timezone
 
 from apps.audit.models import AuditLog
+from services.api_actor import get_api_actor
 from .models import User
 from .serializers import (
     UserRegistrationSerializer,
@@ -17,6 +19,14 @@ from .serializers import (
     UserProfileSerializer,
     UserUpdateSerializer,
 )
+
+
+def _profile_user(request):
+    """Logged-in user, or shared placeholder when API is open and no token sent."""
+    user = request.user
+    if getattr(user, "is_authenticated", False):
+        return user
+    return get_api_actor(request)
 
 
 def _user_response(user, request):
@@ -162,9 +172,11 @@ def login_view(request):
 # ---------------------------------------------------------------------------
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([OptionalAuth])
 def logout_view(request):
     """Logout — invalidates the auth token."""
+    if not getattr(request.user, "is_authenticated", False):
+        return Response({'message': 'Not logged in'}, status=status.HTTP_200_OK)
     try:
         AuditLog.log_action(
             user=request.user,
@@ -190,7 +202,7 @@ def logout_view(request):
 # ---------------------------------------------------------------------------
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([OptionalAuth])
 def me_view(request):
     """
     Returns the full profile of the currently logged-in user.
@@ -203,7 +215,7 @@ def me_view(request):
     Use this on page load to restore session state.
     """
     return Response(
-        _user_response(request.user, request),
+        _user_response(_profile_user(request), request),
         status=status.HTTP_200_OK,
     )
 
@@ -215,10 +227,10 @@ def me_view(request):
 class UserProfileView(generics.RetrieveAPIView):
     """GET /api/auth/profile/ — same as /me/ but via class-based view."""
     serializer_class = UserProfileSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [OptionalAuth]
 
     def get_object(self):
-        return self.request.user
+        return _profile_user(self.request)
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
@@ -233,12 +245,12 @@ class UserUpdateView(generics.UpdateAPIView):
     Use PATCH (partial update) — all fields are optional.
     """
     serializer_class = UserUpdateSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [OptionalAuth]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
     http_method_names = ['patch', 'put', 'options', 'head']
 
     def get_object(self):
-        return self.request.user
+        return _profile_user(self.request)
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
@@ -248,7 +260,7 @@ class UserUpdateView(generics.UpdateAPIView):
     def perform_update(self, serializer):
         user = serializer.save()
         AuditLog.log_action(
-            user=self.request.user,
+            user=_profile_user(self.request),
             action_type='update',
             description=f"User '{user.username}' updated profile",
             content_object=user,
@@ -261,7 +273,7 @@ class UserUpdateView(generics.UpdateAPIView):
         kwargs['partial'] = True   # always allow partial
         response = super().update(request, *args, **kwargs)
         # Re-read with full profile serializer so response includes image_url + candidate_profile
-        response.data = _user_response(request.user, request)
+        response.data = _user_response(_profile_user(request), request)
         return response
 
 
@@ -270,7 +282,7 @@ class UserUpdateView(generics.UpdateAPIView):
 # ---------------------------------------------------------------------------
 
 @api_view(['PATCH'])
-@permission_classes([IsAuthenticated])
+@permission_classes([OptionalAuth])
 @parser_classes([MultiPartParser, FormParser])
 def upload_profile_image(request):
     """
@@ -286,7 +298,7 @@ def upload_profile_image(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    user = request.user
+    user = _profile_user(request)
     user.image = image
     user.save(update_fields=['image', 'updated_at'])
 
